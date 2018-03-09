@@ -4,12 +4,12 @@ Reads from a MongoDB for information about previous matches in order to predict 
 TO DO:
 basically all of it for the 3.0 version
 
-1. update scrape method - in progress
-2. define method to build model (linear)
-3. define method to save / load model
-3. define method to query model
-4. define method to get info from MongoDB
-5. a ridiculous amount of testing
-6. define method to build model (deep)
-7. define method to build model (wide+deep)
-8. define method to simultaneusly build models and choose the best one
+1. update scrape method                     - DONE
+2. define method to build model (linear)    - in progress
+3. define method to save / load model       - in progress
+3. define method to query model             - in progress
+4. define method to get info from MongoDB   - in progress
+5. a ridiculous amount of testing           - not started
+6. define method to build model (deep)      - not started
+7. define method to build model (wide+deep) - not started
+8. define method to compared models         - not started

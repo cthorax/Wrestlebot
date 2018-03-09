@@ -52,7 +52,38 @@ for position, item in enumerate(sorted(wintype_antidict.keys())):
     # this is dynamic in case i eventually wind up needing to add new wintypes. this all may be obviated by a new storage scheme.
     wintype_list[position] = item
 
+class Model(object):
+    def __init__(self):
+        # called when created
+        if SOMETHING:
+            self.load_model()
+        else:
+            self.train_model()
+        pass
 
+    def input_to_model(self):
+        # tf requires a function to put info into the model
+        pass
+
+    def load_model(self):
+        # loads a saved model
+        pass
+
+    def save_model(self):
+        # saves a model
+        pass
+
+    def train_model(self):
+        # calls input_to_model to train a new model
+        pass
+
+    def make_prediction(self):
+        # calls input_to_model to make a prediction
+        pass
+
+    def assess_model(self):
+        # outputs the statistical efficacy of the model
+        pass
 
 
 
