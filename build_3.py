@@ -77,6 +77,55 @@ db = client["Wrastlin"]
 match_collection = db["Matches 3"]
 wrestler_collection = db["Wrestlers"]
 
+index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{}-no-{}.html?order=&type='  # goes from 1 to whatever
+single_match_template = 'http://www.profightdb.com/cards/{}.html'   #format is 'card/event-name'
+
+event_link_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(3) > a"
+
+index_date_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(1) > a"
+match_date_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > table > tbody > tr:nth-child(1) > td:nth-child(1) > a"
+
+match_text_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({})"
+duration_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(5)"
+
+other_match_text_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({}) > a:nth-child({})"
+alternate_text_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > i > td:nth-child({}) > a:nth-child({})"
+
+
+
+def renamethislater(match_counter, browser, type):
+
+    if type == "winner":
+        type_number = 2
+    elif type == "loser":
+        type_number = 4
+
+    temp_names = []
+    temp_urls = []
+    for counter in range(1, 20):
+        try:
+            url = browser.find_element_by_css_selector(other_match_text_template.format(
+                match_counter, type_number, counter)).get_attribute("href")[36:-5]
+            name = browser.find_element_by_css_selector(other_match_text_template.format(
+                match_counter, type_number, counter)).text
+            name = clean_text(name)
+            temp_names.append(name)
+            temp_urls.append(url)
+        except selenium.common.exceptions.NoSuchElementException:
+            try:
+                url = browser.find_element_by_css_selector(alternate_text_template.format(
+                    match_counter, type_number, counter)).get_attribute("href")[36:-5]
+                name = browser.find_element_by_css_selector(
+                    alternate_text_template.format(match_counter, type_number, counter)).text
+                name = clean_text(name)
+                temp_names.append(name)
+                temp_urls.append(url)
+                break
+            except selenium.common.exceptions.NoSuchElementException:
+                break
+
+    return temp_names, temp_urls
+
 def clean_text(text):
     import unicodedata
 
@@ -84,21 +133,12 @@ def clean_text(text):
     temp_string = temp_string.lower()
     temp_string = temp_string.replace("'", "")
     temp_string = temp_string.replace('"', "")
+    temp_string = temp_string.replace('.', "")
     return temp_string
 
-def parse(card, lastdate, lastpage, update=False):
-    index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{}-no-{}.html?order=&type='  # goes from 1 to whatever
-    event_link_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(3) > a"
 
-    index_date_template =       "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(1) > a"
-    match_text_template =       "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({})"
-    match_winner_template =     "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(2) > a:nth-child({})"
-    alternate_winner_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(2) > i > a:nth-child({})"
-    match_loser_template =      "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(4) > a:nth-child({})"
-    alternate_loser_template =  "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(4) > i > a:nth-child({})"
-    duration_template =         "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(5)"
+def full_parse(card, lastdate, lastpage, update=False):
 
-    updated_ids = []
     browser = webdriver.Chrome("chromedriver.exe", chrome_options=chrome_options)
     try:
         browser.get(index_url_template.format(1, card))
@@ -106,14 +146,25 @@ def parse(card, lastdate, lastpage, update=False):
         month, day, year = date.split()
         date = dt.datetime.strptime("{} {} {}".format(day[:-2], month, year), "%d %b %Y")
         date = int(dt.datetime.strftime(date, "%Y%m%d"))
+        try:
+            date <= lastdate
+        except TypeError:
+            lastdate = int(lastdate)    # these all should be int already but some probably slipped through the db change
         if date <= lastdate and not update:
             print("all records up to date.")
         else:
-            for index_counter in range(1,lastpage).__reversed__():
+            if update:
+                page_range = range(1,lastpage)
+                link_range = range(2,12)
+            else:
+                page_range = range(1, lastpage).__reversed__()
+                link_range = range(2,12).__reversed__()
+
+            for index_counter in page_range:
                 browser.get(index_url_template.format(index_counter, card))
                 print("\npage {} beginning.\n".format(index_counter))
 
-                for link_counter in range(2,12).__reversed__():
+                for link_counter in link_range:
                     date = browser.find_element_by_css_selector(index_date_template.format(link_counter)).text
                     month, day, year = date.split()
                     date = dt.datetime.strptime("{} {} {}".format(day[:-2], month, year), "%d %b %Y")
@@ -124,188 +175,127 @@ def parse(card, lastdate, lastpage, update=False):
                     else:
                         browser.find_element_by_css_selector(event_link_template.format(link_counter)).click()
 
-                    for match_counter in range(2,500):
-                        try:
-                            match_number = match_counter - 1
+                    single_parse(browser=browser, date=date, card=card, update=update)
 
-                            wrestlers = []
-
-                            winners = []
-                            for winner_counter in range(1,20):
-                                try:
-                                    winner_url = browser.find_element_by_css_selector(match_winner_template.format(
-                                        match_counter, winner_counter)).get_attribute("href")[36:-5]
-                                    temp_winner = browser.find_element_by_css_selector(match_winner_template.format(
-                                        match_counter, winner_counter)).text
-                                    temp_winner = clean_text(temp_winner)
-                                    winners.append(temp_winner)
-                                    wrestlers.append((temp_winner, winner_url))
-                                except selenium.common.exceptions.NoSuchElementException:
-                                    try:
-                                        winner_url = browser.find_element_by_css_selector(match_winner_template.format(
-                                            match_counter, winner_counter)).get_attribute("href")[36:-5]
-                                        temp_winner = browser.find_element_by_css_selector(
-                                            alternate_winner_template.format(match_counter,winner_counter)).text
-                                        temp_winner = clean_text(temp_winner)
-                                        winners.append(temp_winner)
-                                        wrestlers.append((temp_winner, winner_url))
-                                        break
-                                    except selenium.common.exceptions.NoSuchElementException:
-                                        break
-
-                            wintype = browser.find_element_by_css_selector(
-                                match_text_template.format(match_counter, 3)).text
-                            wintype = wintype.lower()
-                            if not wintype:
-                                wintype = 'def.'    # only one blank wintype found so far but it was a huge PITA so
-
-                            losers = []
-                            for loser_counter in range(1,20):
-                                try:
-                                    loser_url = browser.find_element_by_css_selector(match_loser_template.format(
-                                        match_counter, loser_counter)).get_attribute("href")[36:-5]
-                                    temp_loser = browser.find_element_by_css_selector(match_loser_template.format(
-                                        match_counter, loser_counter)).text
-                                    temp_loser = clean_text(temp_loser)
-                                    losers.append(temp_loser)
-                                    wrestlers.append((temp_loser, loser_url))
-                                except selenium.common.exceptions.NoSuchElementException:
-                                    try:
-                                        loser_url = browser.find_element_by_css_selector(match_winner_template.format(
-                                            match_counter, winner_counter)).get_attribute("href")[36:-5]
-                                        temp_loser = browser.find_element_by_css_selector(
-                                            alternate_loser_template.format(match_counter, loser_counter)).text
-                                        temp_loser = clean_text(temp_loser)
-                                        losers.append(temp_loser)
-                                        wrestlers.append((temp_loser, loser_url))
-                                        break
-                                    except selenium.common.exceptions.NoSuchElementException:
-                                        break
-
-                            teams = []
-                            raw_teams = browser.find_element_by_css_selector(match_text_template.format(match_counter, 4)).text
-                            if '&' in raw_teams or len(winners) > 1:
-                                teams.append(winners)
-                                raw_teams = clean_text(raw_teams)
-
-                                raw_teams = raw_teams.split(',')
-                                for team in raw_teams:
-                                    members = team.split(' & ')
-                                    temp_team = []
-                                    for wrestler in members:
-                                        temp_team.append(wrestler)
-                                    teams.append(temp_team)
-
-                            else:
-                                for wrestler in wrestlers:
-                                    teams.append(wrestler[0])
-
-                            duration = browser.find_element_by_css_selector(duration_template.format(match_counter)).text
-                            duration = duration.split(":")
-                            if len(duration) == 2:  # split on a string without the seperator returns a list containing the string
-                                duration = float(duration[0]) + float(duration[1])/60
-                            else:
-                                duration = 0
-
-                            matchtype = browser.find_element_by_css_selector(
-                                match_text_template.format(match_counter, 6)).text
-                            matchtype = matchtype.lower()
-
-                            titles = browser.find_element_by_css_selector(
-                                match_text_template.format(match_counter, 7)).text
-
-                            url = browser.current_url[36:-5]
-                            id = "".join([str(date), "-", str(match_number), "_", str(card), "_", url])
-
-                            dict_entry = {
-                                "_id": id,
-                                "date": date,
-                                "duration": duration,
-                                "winners": winners,
-                                "wintype": wintype,
-                                "wrestlers": wrestlers,
-                                "teams": teams,
-                                "matchtype": matchtype,
-                                "titles": titles,
-                                "card": num2text_dict[card]
-                                }
-
-                            if update:
-                                result = match_collection.update_one({'_id': id}, {'$set': dict_entry}, upsert=True)
-                            else:
-                                try:
-                                    result = match_collection.insert_one(dict_entry)
-                                except pymongo.errors.DuplicateKeyError as e:
-                                    print('\nlook at this real quick:\n{}\n'.format(e))
-                                    break
-
-                            if result.acknowledged:
-                                updated_ids.append(id)
-                            else:
-                                print('\nlook at this real quick:\n{}\n'.format(e))
-                                break
-
-                        except selenium.common.exceptions.NoSuchElementException:
-                            print("event \'{}\' done.".format(url))
-                            break
-
-                    browser.back()
     except selenium.common.exceptions.WebDriverException:
         try:
             browser.close()
-            print("selenium crashed")
-        except:
-            print("selenium window crashed'")
+        except selenium.common.exceptions.WebDriverException:
+            pass
 
-    browser.close()
-    return updated_ids
+        print("selenium window crashed")
+
+    try:
+        browser.close()
+    except selenium.common.exceptions.WebDriverException:
+        pass
+
+    return True
 
 
-def update_db(id_list=[]):
-    if id_list:
-        matches = []
-        for id in id_list:
-            temp_match = list(match_collection.find({'_id': id}))
-            matches.append(temp_match[0])
-    else:
-        matches = list(match_collection.find().sort("date", pymongo.ASCENDING))
-    for number, match in enumerate(matches):
-        print('\rupdating match {} of {}:'.format(number, len(matches)), end='')
+def single_parse(browser, date, card, update=False):
+    url = browser.current_url[36:-5]
+    for match_counter in range(2, 500):
+        try:
+            match_number = match_counter - 1
+            wrestlers = []
+            url_dict = {}
 
-        id = match['_id']
-        date = id[:8]
-        winners = match['winners']
-        wrestlers = match['wrestlers']
-        matchtype = match['matchtype'].rstrip()
-        if not matchtype:
-            matchtype = 'normal'
-        duration = match['duration']
-        if isinstance(duration, list):
-            duration = 0
-        titles = match['titles'].rstrip()
-        wintype = wintype_dict[match['wintype']]
-        teams = match['teams']
+            winners, urls = renamethislater(match_counter, browser, type='winner')
+            wrestlers.extend(winners)
+            for key, value in zip(winners, urls):
+                url_dict[key] = value
 
-        for wrestler_name, wrestler_url in wrestlers:
-            if wrestler_name in winners or wintype >= 90:
-                modified_wintype = wintype
+            wintype = browser.find_element_by_css_selector(
+                match_text_template.format(match_counter, 3)).text
+            wintype = wintype.lower()
+            if not wintype:
+                wintype = 'def.'  # only one blank wintype found so far but it was a huge PITA, so.
+
+            losers, urls = renamethislater(match_counter, browser, type='loser')
+            wrestlers.extend(losers)
+            for key, value in zip(losers, urls):
+                url_dict[key] = value
+
+            teams = []
+            raw_teams = browser.find_element_by_css_selector(match_text_template.format(match_counter, 4)).text
+            if '&' in raw_teams or len(winners) > 1:
+                teams.append(winners)
+                raw_teams = clean_text(raw_teams)
+
+                raw_teams = raw_teams.split(',')
+                for team in raw_teams:
+                    members = team.split(' & ')
+                    temp_team = []
+                    for wrestler in members:
+                        temp_team.append(wrestler)
+                    teams.append(temp_team)
+
             else:
-                modified_wintype = wintype + 50
+                for wrestler in wrestlers:
+                    teams.append(wrestler)
 
-            wrestler_dict = {
-                '_id': wrestler_url,
-                id: {
-                    'wintype': wintype_antidict[modified_wintype],
-                    'matchtype': matchtype,
-                    'duration': duration,
-                    'titles': titles,
-                    'date': date,
-                    'teams': teams
-                }
+            duration = browser.find_element_by_css_selector(duration_template.format(match_counter)).text
+            duration = duration.split(":")
+            if len(duration) == 2:  # split on a string without the seperator returns a list containing the string
+                duration = int(duration[0]) * 60 + int(duration[1])
+            else:
+                duration = 0
+
+            matchtype = browser.find_element_by_css_selector(
+                match_text_template.format(match_counter, 6)).text
+            if matchtype == ' ':
+                matchtype = 'normal'
+            else:
+                matchtype = clean_text(matchtype)
+
+            titles = browser.find_element_by_css_selector(
+                match_text_template.format(match_counter, 7)).text
+            if titles:
+                titles = clean_text(titles)
+            else:
+                titles = 'none'
+
+            id = "".join([str(date), "-", str(match_number), "_", str(card), "_", url])
+
+            dict_entry = {
+                "_id": id,
+                "date": date,
+                "duration": duration,
+                "winners": winners,
+                "wintype": wintype,
+                "wrestlers": wrestlers,
+                "teams": teams,
+                "matchtype": matchtype,
+                "titles": titles,
+                "card": num2text_dict[card]
             }
-            result = wrestler_collection.update_one({'_id': wrestler_url}, {'$addToSet': {'name': wrestler_name}}, upsert=True)
-            result = wrestler_collection.update_one({'_id': wrestler_url}, {'$set': wrestler_dict}, upsert=True)
 
+            if update:
+                try:
+                    result = match_collection.update_many({'_id': id}, {'$set': dict_entry}, upsert=True)
+                    # print('matched entries: {}\nupdated entries: {}'.format(result.matched_count, result.modified_count))
+                except OverflowError as e:
+                    print(e)
+                    for key, value in dict_entry:
+                        print("{}: {}, type {}".format(key, value, type(value)))
+                    pass
+            else:
+                try:
+                    result = match_collection.insert_one(dict_entry)
+                except pymongo.errors.DuplicateKeyError as e:
+                    print('\nlook at this real quick:\n{}\n'.format(e))
+                    pass
+
+            for name, wrestler_url in url_dict.items():
+                result = wrestler_collection.update_one({'_id': wrestler_url}, {'$addToSet': {'name': name}}, upsert=True)
+                pass
+
+        except selenium.common.exceptions.NoSuchElementException:
+            print("event \'{}\' done.".format(url))
+            break
+
+    browser.back()
     return True
 
 
@@ -338,18 +328,8 @@ def main():
         lastdate = last_date(card)
         lastpage = last_page(card)
         print("beginning {} scrape. last page is {}, last date was {}".format(text_card, lastpage, lastdate))
-        matches = parse(card, lastdate, lastpage, update=False)   # update=True is for testing / updating
-
-    print("\nbeginning db update.")
-    result = update_db(matches)
-
-
-def test():
-    # function just for specific testing crap.
-    result = ['20140408-6_2_smackdown-taping-17862', '20160620-7_2_monday-night-raw-24298']
-    result = update_db(result)
+        matches = full_parse(card, lastdate, lastpage, update=True)   # update=True is for testing / updating
 
 
 if __name__ == '__main__':
-    # test()
     main()
