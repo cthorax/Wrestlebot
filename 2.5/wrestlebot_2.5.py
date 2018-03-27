@@ -272,6 +272,7 @@ def list_predict():
     for match in event:
         print("{}:\n\t{}\n".format(match.match_name, match.prediction))
 
+
 def main():
     global loaded_model
     loaded_model = load_model()
