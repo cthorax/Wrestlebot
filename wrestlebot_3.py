@@ -603,7 +603,7 @@ class Dataset(object):
 
         for results, dataset, backup_file in [(train_results, self.train_dataset, train_backup_file), (test_results, self.test_dataset, test_backup_file), (validate_results, self.validate_dataset, validate_backup_file)]:
             for index, match in enumerate(results):
-                print('\rstarting \'{}\' dataset: item {} of {}'.format(self.dataset_name, index+1+offset, len(results)+offset), end='')
+                print('\rstarting \'{}\' dataset: item {} of {}'.format(backup_file[:-4], index+1+offset, len(results)+offset), end='')
                 for name in match['wrestlers']:
                     temp_wrestler = Wrestler(name=name, train=True, date=match['date'], source_match=match['_id'])
                     dataset = dataset.append(temp_wrestler.history, ignore_index=True)
@@ -949,7 +949,7 @@ def main():
 
     for match in wrestlefestival:
         if match.title == 'none' and match.matchtype == 'normal':
-            model_list = [hybrid_normal_no_title, hybrid_normal, hybrid]
+            model_list = [hybrid_normal_no_title, hybrid_normal, hybrid_no_title, hybrid]
         elif not match.title == 'none' and match.matchtype == 'normal':
             model_list = [hybrid_normal_title, hybrid_normal, hybrid_title, hybrid]
         elif match.title == 'none' and match.matchtype == 'tag':
