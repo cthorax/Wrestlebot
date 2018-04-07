@@ -6,11 +6,11 @@ TO DO:
 1.  update scrape method                                                                                - DONE
 
 2.  define method to get info from MongoDB                                                              - DONE
-3.  define method to build model (linear)                                                               - in progress - 85%
+3.  define method to build model (linear)                                                               - DONE
 
 4.  define method to save / load model                                                                  - in progress - 5%
-5.  define method to query model                                                                        - in progress - 5%
+5.  define method to query model                                                                        - DONE
 
-6.  define method to build model (deep)                                                                 - not started
-7.  define method to build model (wide+deep)                                                            - not started
-8.  define method to compare models                                                                     - not started
+6.  define method to build model (deep)                                                                 - DONE
+7.  define method to build model (wide+deep)                                                            - DONE
+8.  define method to compare models                                                                     - in progress - 20%
