@@ -6,7 +6,7 @@ TO DO:
 1.  update scrape method                                                                                - DONE
 
 2.  define method to get info from MongoDB                                                              - DONE
-    update history dataset to prevent duplicates.                                                       - in progress - 10%
+    update history dataset to prevent duplicates.                                                       - DONE
 
 3.  define method to build model (linear)                                                               - DONE
 
@@ -18,4 +18,4 @@ TO DO:
 8.  define method to compare models                                                                     - DONE
 
 9.  define constant process instantiates models and waits for queries                                   - not started
-10. define method to dynamically generate db queries based on matches given.                            - not started
+10. define method to dynamically generate db queries based on matches given.                            - DONE
