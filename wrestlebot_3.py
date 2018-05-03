@@ -1237,7 +1237,7 @@ def main():
 
     dataset_minimum = 100
 
-    for match in wrestlefestival:
+    for match in wrestlefestival.event_dict['matches']:
         query_list = generate_queries(match)
         match_dataset_list = []
         match_model_list = []
