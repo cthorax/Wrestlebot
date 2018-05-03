@@ -174,23 +174,8 @@ def db_call(db=None, query=None, mode='find', retries=None):
 
     return result
 
+
 def history_dataset():
-    columns = [
-        '0_wintype', '0_matchtype', '0_duration', '0_titles', '0_number_of_teams', '0_opponents', '0_allies',
-        '1_wintype', '1_matchtype', '1_duration', '1_titles', '1_number_of_teams', '1_opponents', '1_allies',
-        '2_wintype', '2_matchtype', '2_duration', '2_titles', '2_number_of_teams', '2_opponents', '2_allies',
-        '3_wintype', '3_matchtype', '3_duration', '3_titles', '3_number_of_teams', '3_opponents', '3_allies',
-        '4_wintype', '4_matchtype', '4_duration', '4_titles', '4_number_of_teams', '4_opponents', '4_allies',
-        '5_wintype', '5_matchtype', '5_duration', '5_titles', '5_number_of_teams', '5_opponents', '5_allies',
-        '6_wintype', '6_matchtype', '6_duration', '6_titles', '6_number_of_teams', '6_opponents', '6_allies',
-        '7_wintype', '7_matchtype', '7_duration', '7_titles', '7_number_of_teams', '7_opponents', '7_allies',
-        '8_wintype', '8_matchtype', '8_duration', '8_titles', '8_number_of_teams', '8_opponents', '8_allies',
-        '9_wintype', '9_matchtype', '9_duration', '9_titles', '9_number_of_teams', '9_opponents', '9_allies',
-        'wintype']
-    return pd.DataFrame(columns=columns)
-
-
-def EXPERIMENTAL_history_dataset():
     columns = [
         '0_wintype', '0_matchtype', '0_duration', '0_titles', '0_number_of_teams', '0_opponents', '0_allies',
         '1_wintype', '1_matchtype', '1_duration', '1_titles', '1_number_of_teams', '1_opponents', '1_allies',
@@ -207,13 +192,10 @@ def EXPERIMENTAL_history_dataset():
 
 
 class Wrestler(object):
-    def __init__(self, name, train=False, date=30001231, source_match=None):
-        assert isinstance(date, int)
-        assert isinstance(source_match, dict)
-
-        self.source_match = source_match
-        self.is_training = train
-        self.circa = date
+    def __init__(self, name, match_dict=None):
+        self.source_match = match_dict
+        self.is_training = match_dict.get('is_training', False)
+        self.circa = match_dict.get('date', 30001231)
         self.name = name.lower()
         self.history = history_dataset()
         self.update()
@@ -225,8 +207,8 @@ class Wrestler(object):
             aliases = list(db_call(db=wrestler_collection, query={"name": self.name}, mode='find'))
             assert aliases  # checks the DB for an instance of the wrestler, and fails if none exists
             self.aliases = aliases[0]['name']
-            # self.get_history()
-            self.EXPERIMENTAL_get_history()
+            self.get_history()
+
         except AssertionError:
             # deletion doesn't work since this is done in a reference to itself, so clearing all values and removing Nones later will have to suffice
             print("wrestler '{}' does not exist.".format(self.name))
@@ -237,7 +219,7 @@ class Wrestler(object):
             self.history = None
 
 
-    def EXPERIMENTAL_get_history(self):
+    def get_history(self):
         # changes list from MongoDB results into Dataframe from pandas
 
         history = []
@@ -270,7 +252,7 @@ class Wrestler(object):
             history.append(blank_match)
         # ensures dataframes are all the same size
 
-        source_dict = {}
+        match_dict = {}
         if self.is_training:    # source_match is an actual match from the db
             for alias in self.aliases:
                 if alias in self.source_match['wrestlers']:
@@ -284,7 +266,7 @@ class Wrestler(object):
                 pass
             else:
                 adjusted_value += 50
-            source_dict['wintype'] = [adjusted_value]
+            match_dict['wintype'] = [adjusted_value]
 
         else:   # source_match is the match_dict from instantiation of match. no match_id, no wintype.
             current_alias = self.name
@@ -311,20 +293,20 @@ class Wrestler(object):
                 else:
                     opponents += 1
 
-        source_dict['number_of_teams'] = [number_of_teams]
-        source_dict['opponents'] = [opponents]
-        source_dict['allies'] = [allies]
+        match_dict['number_of_teams'] = [number_of_teams]
+        match_dict['opponents'] = [opponents]
+        match_dict['allies'] = [allies]
 
         titles = title_dict[self.source_match.get('titles', 'none').split('\n(title change)')[0]]
-        source_dict['titles'] = [titles]
+        match_dict['titles'] = [titles]
 
         duration = self.source_match.get('duration', 0)
-        source_dict['duration'] = [duration]
+        match_dict['duration'] = [duration]
 
         matchtype = self.source_match.get('matchtype', 'normal')
-        source_dict['matchtype'] = [hash(matchtype)]
+        match_dict['matchtype'] = [hash(matchtype)]
 
-        source_dataframe = pd.DataFrame.from_dict(source_dict).astype(int)
+        source_dataframe = pd.DataFrame.from_dict(match_dict).astype(int)
         match_id = [self.source_match.get('_id', 'no id')]
 
         matches_dict = {}
@@ -382,28 +364,26 @@ class Wrestler(object):
 
 
 class Team(object):
-    def __init__(self, team_dict=None):
+    def __init__(self, team_dict=None, match_dict=None):
+        self.team_dict = {
+            'teams': {
+                'name': 'empty team',
+                'members': []
+            }
+        }
+        self.match_dict = match_dict
 
         if team_dict:
-            self.team_dict = team_dict
+            self.team_dict['teams']['name'] = team_dict.get('name', 'empty team')
+            self.team_dict['teams']['members'] = team_dict.get('teams', {}).get('members', [])
             self.update()
-
-        else:
-            self.team_dict = {
-                'teams': {
-                    'name': 'empty team',
-                    'members': []
-                }
-            }
 
     def add_members(self, new_members):
         if isinstance(new_members, list):
             self.team_dict['teams']['members'].extend(new_members)
-
         elif isinstance(new_members, Wrestler):
             if new_members.name:
                 self.team_dict['teams']['members'].append(new_members)
-
         self.update()
 
     def update(self):
@@ -412,7 +392,7 @@ class Team(object):
             if isinstance(member, Wrestler):
                 pass
             elif isinstance(member, str):
-                temp_member = Wrestler(name=member, source_match=self.team_dict, train=False)
+                temp_member = Wrestler(name=member, match_dict=self.match_dict)
                 self.team_dict['teams']['members'][index] = temp_member
 
         if self.team_dict['teams']['name'] == 'empty team' or not self.team_dict['teams']['name']:
@@ -437,6 +417,8 @@ class Match(object):
             self.match_dict['titles'] = match_dict.get('titles', 'none')
             self.match_dict['matchtype'] = match_dict.get('matchtype', 'normal')
             self.match_dict['teams'] = match_dict.get('teams', [])
+
+            self.match_dict = match_dict
             self.update()
         else:
             self.match_dict = {
@@ -455,21 +437,18 @@ class Match(object):
     def update(self):
         #this will update all relevant Match stats when called.
         if self.match_dict['teams']:
-            team_list = []
-            for team_index, team in enumerate(self.match_dict['teams']):
+            for index, team in enumerate(self.match_dict['teams']):
                 if isinstance(team, Team):
                     pass
                 elif isinstance(team, dict):
-                    wrestler_list = []
-                    for wrestler in team['members']:
-                        temp_wrestler = Wrestler(name=wrestler, source_match=self.match_dict, train=False)
-                        wrestler_list.append(temp_wrestler)
-                temp_team = Team()
-                temp_team.add_members(wrestler_list)
-                team_list.append(temp_team)
-            self.match_dict['teams'] = team_list
+                    temp_dict = {
+                        'teams': team
+                    }
 
-        if self.match_dict['name'] == 'empty match':
+                    temp_team = Team(team_dict=temp_dict, match_dict=self.match_dict)
+                    self.match_dict['teams'][index] = temp_team
+
+        if self.match_dict.get('name', 'empty match') == 'empty match':
             match_name = ""
 
             for team in self.match_dict['teams']:
@@ -558,6 +537,41 @@ class Match(object):
         )
 
 
+class Event(object):
+    def __init__(self, event_dict=None):
+        if event_dict:
+            self.event_dict = {}
+            self.event_dict['name'] = event_dict.get('name', 'empty event')
+            self.event_dict['date'] = event_dict.get('date', 30010101)
+            self.event_dict['matches'] = event_dict.get('matches', [])
+            self.update()
+        else:
+            self.event_dict = {
+                'name': 'empty event',
+                'date': 'none',
+                'matches': []
+            }
+
+    def add_event(self, new_matches):
+        if isinstance(new_matches, list):
+            self.event_dict['matches'].extend(new_matches)
+        else:
+            self.event_dict['matches'].append(new_matches)
+
+    def update(self):
+        #this will update all relevant Match stats when called.
+        if self.event_dict['matches']:
+            for index, match in enumerate(self.event_dict['matches']):
+                if isinstance(match, Match):
+                    pass
+                elif isinstance(match, dict):
+                    temp_dict = match
+                    temp_dict['date'] = self.event_dict['date']
+
+                    temp_match = Match(match_dict=temp_dict)
+                    self.event_dict['matches'][index] = temp_match
+
+
 class Dataset(object):
     def __init__(self, limit=None, query=None, backup_every=50, name=None):
         assert isinstance(limit, int) or not limit
@@ -566,15 +580,15 @@ class Dataset(object):
         self.backup_every = backup_every
 
         self.train_dataset = history_dataset()
-        self.train_backup_file = 'G:\wrestlebot\csv query backups\{} - train.csv'.format(query).replace(':', ';')
+        self.train_backup_file = 'G:\wrestlebot\csv query backups\{} - train.csv'.format(repr(query).replace(':', ';'))
         self.train_offset = 0
 
         self.test_dataset = history_dataset()
-        self.test_backup_file = 'G:\wrestlebot\csv query backups\{} - test.csv'.format(query).replace(':', ';')
+        self.test_backup_file = 'G:\wrestlebot\csv query backups\{} - test.csv'.format(repr(query).replace(':', ';'))
         self.test_offset = 0
 
         self.validate_dataset = history_dataset()
-        self.validate_backup_file = 'G:\wrestlebot\csv query backups\{} - validate.csv'.format(query).replace(':', ';')
+        self.validate_backup_file = 'G:\wrestlebot\csv query backups\{} - validate.csv'.format(repr(query).replace(':', ';'))
         self.validate_offset = 0
 
         self.match_list = []
@@ -685,12 +699,13 @@ class Dataset(object):
                 results = validate_results
 
             for index, match in enumerate(results):
+                match['is training'] = True
                 print('\rstarting \'{}\' dataset: item {} of {}'.format(backup_file[:-4], index+1+offset, len(results)+offset), end='')
                 if match['_id'] in self.match_list:
                     continue
                 else:
                     for name in match['wrestlers']:
-                        temp_wrestler = Wrestler(name=name, train=True, date=match['date'], source_match=match)
+                        temp_wrestler = Wrestler(name=name, match_dict=match)
                         self.update(dataset=temp_wrestler.history, type=dataset_name)
                     if index % self.backup_every == 0 and index > 0:
                         self.csv_output(mode=dataset_name, backup_file=backup_file)
@@ -794,7 +809,7 @@ class Model(object):
         self.validate_dataset = dataset.validate_dataset
         self.layer_specs = layer_specs
         self.name = name
-        self.save_hash = hash('{} - {}'.format(self.name, self.layer_specs)')
+        self.save_hash = hash('{} - {}'.format(self.name, self.layer_specs))
 
         # get datasets to train and test
         (self.train_x, self.train_y), (self.test_x, self.test_y), (self.validate_x, self.validate_y) = self.load_data()
@@ -923,20 +938,20 @@ class Model(object):
 
         if self.model_type == 'linear':
             classifier = tf.estimator.LinearClassifier(
-                model_dir='G:\wrestlebot\linear models\{}'.format(self.ave_hash),
+                model_dir='G:\wrestlebot\linear models\{}'.format(self.save_hash),
                 feature_columns=numeric_feature_columns + wide_categorical_columns,
                 n_classes=max(wintype_antidict.keys()) + 1,  # labels must be strictly less than classes
             )
         elif self.model_type == 'deep':
             classifier = tf.estimator.DNNClassifier(
-                model_dir='G:\wrestlebot\deep models\{}'.format(self.ave_hash),
+                model_dir='G:\wrestlebot\deep models\{}'.format(self.save_hash),
                 feature_columns=numeric_feature_columns + deep_categorical_columns,
                 hidden_units=self.layer_specs,
                 n_classes=max(wintype_antidict.keys()) + 1,  # labels must be strictly less than classes
             )
         elif self.model_type == 'hybrid':
             classifier = tf.estimator.DNNLinearCombinedClassifier(
-                model_dir='G:\wrestlebot\hybrid models\{}'.format(self.ave_hash),
+                model_dir='G:\wrestlebot\hybrid models\{}'.format(self.save_hash),
                 linear_feature_columns=numeric_feature_columns + wide_categorical_columns,
                 dnn_feature_columns=numeric_feature_columns + deep_categorical_columns,
                 dnn_hidden_units=self.layer_specs,
@@ -1036,7 +1051,7 @@ def generate_queries(match):
     temp_query_list = []
     query_list = []
 
-    titles = match.match_dict['titles'].split('\n(title change)')[0]  # trims the title change line off title field
+    titles = match.match_dict.get('titles', 'none').split('\n(title change)')[0]  # trims the title change line off title field
     try:
         assert titles in title_dict.keys()
     except AssertionError:
@@ -1088,131 +1103,134 @@ def main():
     print('\n\n\n\n\nk starting now.')
 
     # wrestlemania 34 matches start here
-    wrestlefestival = [
-        Match({'name': 'universal championship',
-               'titles':'wwe universal championship',
-               'matchtype': 'normal',
-               'teams':[{'members': ['brock lesnar']},
-                        {'members': ['roman reigns']}]}),
+    wrestlefestival = Event(event_dict={
+        'name': 'wrestlemania 34',
+        'date': 20180408,
+        'matches': [
+            {'name': 'universal championship',
+                   'titles':'wwe universal championship',
+                   'matchtype': 'normal',
+                   'teams':[{'members': ['brock lesnar']},
+                            {'members': ['roman reigns']}]},
 
-        Match({'name': 'wwe championship',
-               'titles':'wwe championship',
-               'matchtype': 'normal',
-               'teams':[{'members': ['aj styles']},
-                        {'members': ['shinsuke nakamura']}]}),
+            {'name': 'wwe championship',
+                   'titles':'wwe championship',
+                   'matchtype': 'normal',
+                   'teams':[{'members': ['aj styles']},
+                            {'members': ['shinsuke nakamura']}]},
 
-        Match({'name': 'rousey debut',
-               'matchtype': 'tag',
-               'teams':[{'members': ['kurt angle']},     # rhonda rousey isn't in the db
-                        {'members': ['stephanie mcmahon', 'triple h']}]}),
+            {'name': 'rousey debut',
+                   'matchtype': 'tag',
+                   'teams':[{'members': ['kurt angle']},     # rhonda rousey isn't in the db
+                            {'members': ['stephanie mcmahon', 'triple h']}]},
 
-        Match({ 'matchtype': 'tag',
-                'teams':[{'members': ['sami zayn', 'kevin owens']},
-                         {'members': ['shane mcmahon', 'daniel bryan']}]}),
+            { 'matchtype': 'tag',
+                    'teams':[{'members': ['sami zayn', 'kevin owens']},
+                             {'members': ['shane mcmahon', 'daniel bryan']}]},
 
-        Match({'name': 'smackdown womens championship',
-               'titles':'wwe smackdown womens championship',
-               'teams':[{'members': ['charlotte flair']},
-                        {'members': ['asuka']}]}),
+            {'name': 'smackdown womens championship',
+                   'titles':'wwe smackdown womens championship',
+                   'teams':[{'members': ['charlotte flair']},
+                            {'members': ['asuka']}]},
 
-        Match({'name': 'raw womens championship',
-               'titles':'wwe raw womens championship',
-               'teams':[{'members': ['alexa bliss']},
-                        {'members': ['nia jax']}]}),
+            {'name': 'raw womens championship',
+                   'titles':'wwe raw womens championship',
+                   'teams':[{'members': ['alexa bliss']},
+                            {'members': ['nia jax']}]},
 
-        Match({'name': 'intercontinental championship',
-               'titles':'wwe intercontinental championship',
-               'teams':[{'members': ['the miz']},
-                        {'members': ['seth rollins']},
-                        {'members': ['finn balor']}]}),
+            {'name': 'intercontinental championship',
+                   'titles':'wwe intercontinental championship',
+                   'teams':[{'members': ['the miz']},
+                            {'members': ['seth rollins']},
+                            {'members': ['finn balor']}]},
 
-        Match({'name': 'united states championship',
-               'titles':'wwe united states championship',
-               'teams':[{'members': ['randy orton']},
-                        {'members': ['bobby roode']},
-                        {'members': ['jinder mahal']},
-                        {'members': ['rusev']}]}),
+            {'name': 'united states championship',
+                   'titles':'wwe united states championship',
+                   'teams':[{'members': ['randy orton']},
+                            {'members': ['bobby roode']},
+                            {'members': ['jinder mahal']},
+                            {'members': ['rusev']}]},
 
-        Match({'name': 'smackdown tag championship',
-               'titles':'wwe smackdown tag championship',
-               'matchtype': 'tag',
-               'teams':[
-                   {'name': 'the usos',
-                    'members':['jey uso', 'jimmy uso']},
-                   {'name': 'the new day',
-                    'members': ['big e', 'kofi kingston']},
-                   {'name': 'the bludgeon brothers',
-                    'members': ['harper', 'rowan']}]}),
+            {'name': 'smackdown tag championship',
+                   'titles':'wwe smackdown tag championship',
+                   'matchtype': 'tag',
+                   'teams':[
+                       {'name': 'the usos',
+                        'members':['jey uso', 'jimmy uso']},
+                       {'name': 'the new day',
+                        'members': ['big e', 'kofi kingston']},
+                       {'name': 'the bludgeon brothers',
+                        'members': ['harper', 'rowan']}]},
 
-        Match({'name': 'raw tag championship',
-               'titles':'wwe raw tag championship',
-               'matchtype': 'tag',
-               'teams':[{'name': 'the bar',
-                         'members': ['cesaro', 'sheamus']},
-                        {'members': ['braun strowman']}  # unannounced teammate
-                       ]}),
+            {'name': 'raw tag championship',
+                   'titles':'wwe raw tag championship',
+                   'matchtype': 'tag',
+                   'teams':[{'name': 'the bar',
+                             'members': ['cesaro', 'sheamus']},
+                            {'members': ['braun strowman']}  # unannounced teammate
+                           ]},
 
-        Match({'name': 'cruiserweight championship',
-               'titles':'wwe cruiserweight championship',
-               'teams':[{'members': ['cedric alexander']},
-                        {'members': ['mustafa ali']}]}),
+            {'name': 'cruiserweight championship',
+                   'titles':'wwe cruiserweight championship',
+                   'teams':[{'members': ['cedric alexander']},
+                            {'members': ['mustafa ali']}]},
 
-        Match({'name': 'mens battle royale',
-               'teams':[
-                        {'members': ['Aiden English']},
-                        {'members': ['Konnor']},
-                        {'members': ['Curt Hawkins']},
-                        {'members': ['R-Truth']},
-                        {'members': ['Primo Colon']},
-                        {'members': ['Mike Kanellis']},
-                        {'members': ['Tyler Breeze']},
-                        {'members': ['Viktor']},
-                        {'members': ['Zack Ryder']},
-                        {'members': ['Karl Anderson']},
-                        {'members': ['Luke Gallows']},
-                        {'members': ['Apollo']},
-                        {'members': ['Shelton Benjamin']},
-                        {'members': ['Rhyno']},
-                        {'members': ['Dash Wilder']},
-                        {'members': ['Scott Dawson']},
-                        {'members': ['Bo Dallas']},
-                        {'members': ['Curtis Axel']},
-                        {'members': ['Sin Cara']},
-                        {'members': ['Fandango']},
-                        {'members': ['Heath Slater']},
-                        {'members': ['Chad Gable']},
-                        {'members': ['Titus ONeil']},
-                        {'members': ['Goldust']},
-                        {'members': ['Tye Dillinger']},
-                        {'members': ['Dolph Ziggler']},
-                        {'members': ['Kane']},
-                        {'members': ['Mojo Rawley']},
-                        {'members': ['Baron Corbin']},
-                        {'members': ['matt hardy']}]}),
+            {'name': 'mens battle royale',
+                   'teams':[
+                            {'members': ['Aiden English']},
+                            {'members': ['Konnor']},
+                            {'members': ['Curt Hawkins']},
+                            {'members': ['R-Truth']},
+                            {'members': ['Primo Colon']},
+                            {'members': ['Mike Kanellis']},
+                            {'members': ['Tyler Breeze']},
+                            {'members': ['Viktor']},
+                            {'members': ['Zack Ryder']},
+                            {'members': ['Karl Anderson']},
+                            {'members': ['Luke Gallows']},
+                            {'members': ['Apollo']},
+                            {'members': ['Shelton Benjamin']},
+                            {'members': ['Rhyno']},
+                            {'members': ['Dash Wilder']},
+                            {'members': ['Scott Dawson']},
+                            {'members': ['Bo Dallas']},
+                            {'members': ['Curtis Axel']},
+                            {'members': ['Sin Cara']},
+                            {'members': ['Fandango']},
+                            {'members': ['Heath Slater']},
+                            {'members': ['Chad Gable']},
+                            {'members': ['Titus ONeil']},
+                            {'members': ['Goldust']},
+                            {'members': ['Tye Dillinger']},
+                            {'members': ['Dolph Ziggler']},
+                            {'members': ['Kane']},
+                            {'members': ['Mojo Rawley']},
+                            {'members': ['Baron Corbin']},
+                            {'members': ['matt hardy']}]},
 
-        Match({'name': 'womens battle royale',
-               'teams':[
-                   {'members': ['Carmella']},
-                   {'members': ['Dana Brooke']},
-                   {'members': ['Mandy Rose']},
-                   {'members': ['Sonya Deville']},
-                   {'members': ['Kairi Sane']},
-                   {'members': ['Lana']},
-                   {'members': ['Kavita Devi']},
-                   {'members': ['Taynara Conti']},
-                   {'members': ['Bianca Belair']},
-                   {'members': ['Dakota Kai']},
-                   {'members': ['Becky Lynch']},
-                   {'members': ['Mickie James']},
-                   {'members': ['Peyton Royce']},
-                   {'members': ['Natalya']},
-                   {'members': ['Liv Morgan']},
-                   {'members': ['Ruby Riott']},
-                   {'members': ['Sarah Logan']},
-                   {'members': ['Sasha Banks']},
-                   {'members': ['Bayley']},
-                   {'members': ['naomi']}]})
-     ]
+            {'name': 'womens battle royale',
+                   'teams':[
+                       {'members': ['Carmella']},
+                       {'members': ['Dana Brooke']},
+                       {'members': ['Mandy Rose']},
+                       {'members': ['Sonya Deville']},
+                       {'members': ['Kairi Sane']},
+                       {'members': ['Lana']},
+                       {'members': ['Kavita Devi']},
+                       {'members': ['Taynara Conti']},
+                       {'members': ['Bianca Belair']},
+                       {'members': ['Dakota Kai']},
+                       {'members': ['Becky Lynch']},
+                       {'members': ['Mickie James']},
+                       {'members': ['Peyton Royce']},
+                       {'members': ['Natalya']},
+                       {'members': ['Liv Morgan']},
+                       {'members': ['Ruby Riott']},
+                       {'members': ['Sarah Logan']},
+                       {'members': ['Sasha Banks']},
+                       {'members': ['Bayley']},
+                       {'members': ['naomi']}]}
+    ]})
 
     dataset_dict = {}
     model_dict = {}
