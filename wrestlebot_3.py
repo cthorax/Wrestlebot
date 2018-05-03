@@ -566,27 +566,31 @@ class Dataset(object):
         self.backup_every = backup_every
 
         self.train_dataset = history_dataset()
-        self.train_backup_file = '.\csv query backups\{} - train.csv'.format(query).replace(':', ';')
+        self.train_backup_file = 'G:\wrestlebot\csv query backups\{} - train.csv'.format(query).replace(':', ';')
         self.train_offset = 0
 
         self.test_dataset = history_dataset()
-        self.test_backup_file = '.\csv query backups\{} - test.csv'.format(query).replace(':', ';')
+        self.test_backup_file = 'G:\wrestlebot\csv query backups\{} - test.csv'.format(query).replace(':', ';')
         self.test_offset = 0
 
         self.validate_dataset = history_dataset()
-        self.validate_backup_file = '.\csv query backups\{} - validate.csv'.format(query).replace(':', ';')
+        self.validate_backup_file = 'G:\wrestlebot\csv query backups\{} - validate.csv'.format(query).replace(':', ';')
         self.validate_offset = 0
 
         self.match_list = []
 
         for dataset_name in ['train', 'test', 'validate']:
             # self.csv_input(dataset_name)
-            self.EXPERIMENTAL_csv_input(dataset_name)
+            self.csv_input(dataset_name)
 
         results, size, oversize = self.get_results(limit=limit, query=query)
 
         if results:     # all this can be skipped if there's no elements in results, because we then know we're already loaded up.
             self.parse_results(results=results, size=size, oversize=oversize)
+
+        for dataset in [self.train_dataset, self.test_dataset, self.validate_dataset]:
+            if 'match_id' in dataset.keys():
+                dataset.pop('match_id')
 
     def get_results(self, limit, query):
         if limit:
@@ -698,7 +702,7 @@ class Dataset(object):
             if 'match_id' in dataset.keys():
                  dataset.pop('match_id')
 
-    def EXPERIMENTAL_csv_input(self, dataset_name):
+    def csv_input(self, dataset_name):
         assert dataset_name in ['train', 'test', 'validate']
         if dataset_name == 'train':
             backup_file = self.train_backup_file
@@ -790,6 +794,7 @@ class Model(object):
         self.validate_dataset = dataset.validate_dataset
         self.layer_specs = layer_specs
         self.name = name
+        self.save_hash = hash('{} - {}'.format(self.name, self.layer_specs)')
 
         # get datasets to train and test
         (self.train_x, self.train_y), (self.test_x, self.test_y), (self.validate_x, self.validate_y) = self.load_data()
@@ -918,20 +923,20 @@ class Model(object):
 
         if self.model_type == 'linear':
             classifier = tf.estimator.LinearClassifier(
-                model_dir='.\linear models\{}'.format(self.name),
+                model_dir='G:\wrestlebot\linear models\{}'.format(self.ave_hash),
                 feature_columns=numeric_feature_columns + wide_categorical_columns,
                 n_classes=max(wintype_antidict.keys()) + 1,  # labels must be strictly less than classes
             )
         elif self.model_type == 'deep':
             classifier = tf.estimator.DNNClassifier(
-                model_dir='.\deep models\{} - {}'.format(self.name, self.layer_specs),
+                model_dir='G:\wrestlebot\deep models\{}'.format(self.ave_hash),
                 feature_columns=numeric_feature_columns + deep_categorical_columns,
                 hidden_units=self.layer_specs,
                 n_classes=max(wintype_antidict.keys()) + 1,  # labels must be strictly less than classes
             )
         elif self.model_type == 'hybrid':
             classifier = tf.estimator.DNNLinearCombinedClassifier(
-                model_dir='.\hybrid models\{} - {}'.format(self.name, self.layer_specs),
+                model_dir='G:\wrestlebot\hybrid models\{}'.format(self.ave_hash),
                 linear_feature_columns=numeric_feature_columns + wide_categorical_columns,
                 dnn_feature_columns=numeric_feature_columns + deep_categorical_columns,
                 dnn_hidden_units=self.layer_specs,
@@ -1231,11 +1236,11 @@ def main():
                     match_model_list.append(model_dict[name])
                 except LookupError:
                     if dataset_dict[name].train_dataset.shape[0] < dataset_minimum:
-                        print('dataset \'{}\'under minimum number of entries; skipping model build.\n'.format(name))
+                        print('dataset \'{}\' under minimum number of entries; skipping model build.\n'.format(name))
                         model_dict[name] = None
                         match_model_list.append(model_dict[name])
                     else:
-                        model_dict[name] = Model(train_steps=500, model_type='hybrid', dataset=dataset_dict[name], name=name, layer_specs=[80, 90, 100])
+                        model_dict[name] = Model(train_steps=2500, model_type='hybrid', dataset=dataset_dict[name], name=name, layer_specs=[80, 90, 100])
                         match_model_list.append(model_dict[name])
 
         winner = compare_models(model_list=match_model_list)
