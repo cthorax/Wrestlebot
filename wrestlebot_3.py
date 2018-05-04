@@ -1067,7 +1067,7 @@ def generate_queries(match):
     else:
         title_queries.extend([title_query, all_titles_query])
 
-    matchtype = match.match_dict['matchtype']
+    matchtype = match.match_dict.get('matchtype', 'normal')
     matchtype_monograms = matchtype.split()
     for index, monogram in enumerate(matchtype_monograms):
         matchtype_monograms[index] = '{} '.format(monogram)     # all need to end in spaces for next step to work right
