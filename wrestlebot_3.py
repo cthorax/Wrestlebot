@@ -13,29 +13,6 @@ db = client["Wrastlin"]
 match_collection = db["Matches 3"]
 wrestler_collection = db["Wrestlers"]
 
-
-wintype_dict = {
-    "def. (pin)": 2,
-    "(pin)": 2,
-    "def. (sub)": 3,
-    "(sub)": 3,
-    "def. (dq)": 4,
-    "(dq)": 4,
-    "def. (forfeit)": 5,
-    "def. (co)": 6,
-    "def. (ko)": 7,
-    "def. (tko)": 8,
-    "def.": 1,
-
-    "draw (nc)": 91,
-    "draw (dco)": 92,
-    "draw (time)": 93,
-    "draw (ddq)": 94,
-    "draw (dpin)": 95,
-    "draw": 90,
-
-    None: 99
-}
 wintype_antidict = {
     51: 'loss',
     52: 'loss via pinfall',
@@ -61,55 +38,6 @@ wintype_antidict = {
     95: "draw, double pin",
     99: "none, no match"
 }
-
-title_dict = {
-    'none': 0,
-    'money in the bank briefcase': 0,
-    '(title change)': 0,
-    'wwe king of the ring': 0,
-
-    'wwe universal championship': 1,
-
-    'wwe intercontinental championship': 2,
-    
-    'wwe raw womens title': 3,
-    'wwe raw womens championship': 3,
-    'wwe divas championship': 3,
-    'wwe womens championship (2016)': 3,
-
-    'wwe raw tag team championship': 4,
-    'wwe raw tag championship': 4,
-    'wwe tag team championship': 4,
-
-    'wwe cruiserweight title': 4,
-    'wwe cruiserweight championship': 4,
-    'cruiserweight classic championship\nwwe cruiserweight title': 4,
-
-    'wwe championship': 11,
-    'wwe world heavyweight championship': 11,
-    'wwe world championship': 11,
-    'world heavyweight championship (wwe)': 11,
-
-    'wwe united states championship': 12,
-
-    'wwe smackdown womens championship': 13,
-    'wwe smackdown womens title': 13,
-    
-    'wwe smackdown tag team championship': 14,
-    'wwe smackdown tag championship': 14,
-
-    'wwe united states championship\nwwe world heavyweight championship': 20,
-
-    
-    'nxt championship': 31,
-
-    'wwe united kingdom championship': 32,
-
-    'nxt womens title': 33,
-
-    'nxt tag team titles': 34,
-    'dusty rhodes tag team classic cup': 34,
-}
 title_antidict = {
     0: 'none',
     1: 'wwe universal title (raw)',
@@ -125,9 +53,12 @@ title_antidict = {
     20: 'both smackdown titles',
 
     31: 'nxt title',
-    32: 'wwe uk title',
-    33: 'nxt womens title',
-    34: 'nxt tag team title',
+    32: 'nxt north america title',
+    33: 'wwe uk title',
+    34: 'nxt womens title',
+    35: 'nxt tag team title',
+
+    99: 'unknown title'
 }
 
 blank_match = {
@@ -142,7 +73,8 @@ blank_match = {
     '_id': None
 }
 
-def db_call(db=None, query=None, mode='find', retries=None):
+
+def db_call(db=None, query=None, mode='find', retries=None, verbose=False):
     assert db
     assert mode in ['find', 'aggregate']
     assert isinstance(retries, int) or retries is None
@@ -163,14 +95,15 @@ def db_call(db=None, query=None, mode='find', retries=None):
                 else:
                     result = db.aggregate()
 
-        except pymongo.errors.AutoReconnect:
+        except (pymongo.errors.AutoReconnect, TimeoutError):
             failures += 1
             if retries:
                 if failures > retries:
                     raise pymongo.errors.AutoReconnect
                 else:
-                    print ('db call timed out. retrying.')
-                    result = None
+                    if verbose:
+                        print ('db call timed out. retrying.')
+                        result = None
 
     return result
 
@@ -204,14 +137,15 @@ class Wrestler(object):
         # this will update all relevant wrestler stats when called
 
         try:
-            aliases = list(db_call(db=wrestler_collection, query={"name": self.name}, mode='find'))
+            aliases = list(db_call(db=wrestler_collection, query={"name": self.name}, mode='find', verbose=verbose))
             assert aliases  # checks the DB for an instance of the wrestler, and fails if none exists
             self.aliases = aliases[0]['name']
             self.get_history()
 
         except AssertionError:
             # deletion doesn't work since this is done in a reference to itself, so clearing all values and removing Nones later will have to suffice
-            print("wrestler '{}' does not exist.".format(self.name))
+            if verbose:
+                print("wrestler '{}' does not exist.".format(self.name))
             self.source_match = None
             self.is_training = None
             self.circa = None
@@ -240,7 +174,7 @@ class Wrestler(object):
                     ]
                 }
 
-            temp_history = list(db_call(db=match_collection, query=query, mode='find').limit(10).sort("date", pymongo.DESCENDING))
+            temp_history = list(db_call(db=match_collection, query=query, mode='find', verbose=verbose).limit(10).sort("date", pymongo.DESCENDING))
             history.extend(temp_history)
         history = sorted(history, key=lambda x: x['date'], reverse=True)[:10]
         # sorts the list by date descending and then truncates to number_of_matches entries
@@ -252,7 +186,7 @@ class Wrestler(object):
             history.append(blank_match)
         # ensures dataframes are all the same size
 
-        match_dict = {}
+        source_dict = {}
         if self.is_training:    # source_match is an actual match from the db
             for alias in self.aliases:
                 if alias in self.source_match['wrestlers']:
@@ -260,15 +194,15 @@ class Wrestler(object):
                     break
 
             is_winner = current_alias in self.source_match['winners']
-            wintype = self.source_match.get('wintype', 0)
-            adjusted_value = wintype_dict.get(wintype)
+            wintype = self.source_match.get('wintype', "none, no match")
+            adjusted_value = wintype_dict.get(wintype, 99)
             if adjusted_value >= 90 or is_winner:
                 pass
             else:
                 adjusted_value += 50
-            match_dict['wintype'] = [adjusted_value]
+            source_dict['wintype'] = [adjusted_value]
 
-        else:   # source_match is the match_dict from instantiation of match. no match_id, no wintype.
+        else:   # source_match is the source_dict from instantiation of match. no match_id, no wintype.
             current_alias = self.name
 
         teams = self.source_match.get('teams', [])
@@ -293,20 +227,20 @@ class Wrestler(object):
                 else:
                     opponents += 1
 
-        match_dict['number_of_teams'] = [number_of_teams]
-        match_dict['opponents'] = [opponents]
-        match_dict['allies'] = [allies]
+        source_dict['number_of_teams'] = [number_of_teams]
+        source_dict['opponents'] = [opponents]
+        source_dict['allies'] = [allies]
 
-        titles = title_dict[self.source_match.get('titles', 'none').split('\n(title change)')[0]]
-        match_dict['titles'] = [titles]
+        titles = title_dict.get(self.source_match.get('titles', 'none').split('\n(title change)')[0], 0)
+        source_dict['titles'] = [titles]
 
         duration = self.source_match.get('duration', 0)
-        match_dict['duration'] = [duration]
+        source_dict['duration'] = [duration]
 
         matchtype = self.source_match.get('matchtype', 'normal')
-        match_dict['matchtype'] = [hash(matchtype)]
+        source_dict['matchtype'] = [hash(matchtype)]
 
-        source_dataframe = pd.DataFrame.from_dict(match_dict).astype(int)
+        source_dataframe = pd.DataFrame.from_dict(source_dict)
         match_id = [self.source_match.get('_id', 'no id')]
 
         matches_dict = {}
@@ -334,7 +268,7 @@ class Wrestler(object):
             matches_dict["".join([str(match_number), "_allies"])] = [allies]
 
             titles = match.get('titles', '').split('\n(title change)')[0]
-            matches_dict["".join([str(match_number), "_titles"])] = [title_dict[titles]]
+            matches_dict["".join([str(match_number), "_titles"])] = [title_dict.get(titles, 0)]
 
             matchtype = match.get('matchtype', 'normal')
             matches_dict["".join([str(match_number), "_matchtype"])] = [hash(matchtype)]
@@ -343,7 +277,7 @@ class Wrestler(object):
             matches_dict["".join([str(match_number), "_duration"])] = [duration]
 
             wintype = match.get('wintype', None)
-            adjusted_value = wintype_dict[wintype]
+            adjusted_value = wintype_dict.get(wintype, 99)
             if adjusted_value >= 90 or is_winner:
                 pass
             else:
@@ -354,11 +288,6 @@ class Wrestler(object):
         matches_dataframe = pd.DataFrame.from_dict(matches_dict)
         history_dataframe = matches_dataframe.join(source_dataframe).astype(int)
         history_dataframe = history_dataframe.assign(match_id=match_id)
-
-        try:
-            assert not history_dataframe.isnull().values.any()
-        except AssertionError:
-            pass
 
         self.history = history_dataframe
 
@@ -414,7 +343,7 @@ class Match(object):
         if match_dict:
             self.match_dict = {}
             self.match_dict['name'] = match_dict.get('name', 'empty match')
-            self.match_dict['titles'] = match_dict.get('titles', 'none')
+            self.match_dict['titles'] = match_dict.get('titles', 'unknown title')
             self.match_dict['matchtype'] = match_dict.get('matchtype', 'normal')
             self.match_dict['teams'] = match_dict.get('teams', [])
 
@@ -456,7 +385,7 @@ class Match(object):
 
             self.match_dict['name'] = match_name[4:]  # removes extra ' VS ' from front
 
-    def predict(self, model):
+    def base_predict(self, model):
         assert isinstance(model, Model)
 
         self.predictions = None
@@ -526,15 +455,56 @@ class Match(object):
                         self.predicted_wintype = wintype
                         break
 
-        print(
-            "using {} model:\npredicted winner of '{}' is\n{} ({:.3%}).\nMost likely wintype is {}.\n".format(
-            model.name,
-            self.match_dict['name'],
-            self.predicted_winner[0],
-            self.predicted_winner[1] / norm,
-            wintype_antidict[self.predicted_wintype]
-            )
-        )
+        prediction_dict = {
+            'prediction_string': "using {model_name} model:\npredicted winner of '{match_name}' is\n{winner_name} ({winner_percent:.3%}).\nMost likely wintype is {wintype}.\n",
+            'model_name': model.name,
+            'match_name': self.match_dict['name'],
+            'winner_name': self.predicted_winner[0],
+            'winner_percent': self.predicted_winner[1] / norm,
+            'wintype': wintype_antidict[self.predicted_wintype]
+        }
+
+        return prediction_dict
+
+    def aggregate_predict(self, model_list):
+        for model in model_list:
+            assert isinstance(model, Model) or model is None
+
+        winner = compare_models(model_list=model_list, verbose=verbose)
+        prediction_list = []
+
+        team_dict = {}
+        for team in self.match_dict['teams']:
+            team_name = team.team_dict['teams']['name']
+            team_dict[team_name] = 0
+
+        for model in model_list:
+            if model:
+                temp_prediction = self.base_predict(model=model)
+                if model is winner:
+                    temp_prediction['is_winner'] = True
+                prediction_list.append(temp_prediction)
+
+        final_prediction = None
+        for prediction in prediction_list:
+            team_name = prediction['winner_name']
+            team_dict[team_name] += 1 + prediction.get('is_winner', 0)
+            current_count = team_dict[team_name]
+
+            if final_prediction:
+                if current_count > final_count:
+                    final_prediction = prediction
+                    final_count = team_dict[final_prediction['winner_name']]
+                else:
+                    if current_count == final_count and prediction.get('is_winner', None):
+                        final_prediction = prediction
+                        final_count = team_dict[final_prediction['winner_name']]
+
+            else:
+                final_prediction = prediction
+                final_count = team_dict[final_prediction['winner_name']]
+
+        return final_prediction
 
 
 class Event(object):
@@ -573,22 +543,22 @@ class Event(object):
 
 
 class Dataset(object):
-    def __init__(self, limit=None, query=None, backup_every=50, name=None):
+    def __init__(self, limit=None, query=None, backup_every=50, name=None, verbose=False):
         assert isinstance(limit, int) or not limit
 
         self.name = name
         self.backup_every = backup_every
 
         self.train_dataset = history_dataset()
-        self.train_backup_file = 'G:\wrestlebot\csv query backups\{} - train.csv'.format(repr(query).replace(':', ';'))
+        self.train_backup_file = 'G:\wrestlebot\csv query backups\{} - train.csv'.format('{}'.format(query).replace(":", '').replace("'", ''))
         self.train_offset = 0
 
         self.test_dataset = history_dataset()
-        self.test_backup_file = 'G:\wrestlebot\csv query backups\{} - test.csv'.format(repr(query).replace(':', ';'))
+        self.test_backup_file = 'G:\wrestlebot\csv query backups\{} - test.csv'.format('{}'.format(query).replace(":", '').replace("'", ''))
         self.test_offset = 0
 
         self.validate_dataset = history_dataset()
-        self.validate_backup_file = 'G:\wrestlebot\csv query backups\{} - validate.csv'.format(repr(query).replace(':', ';'))
+        self.validate_backup_file = 'G:\wrestlebot\csv query backups\{} - validate.csv'.format('{}'.format(query).replace(":", '').replace("'", ''))
         self.validate_offset = 0
 
         self.match_list = []
@@ -621,22 +591,23 @@ class Dataset(object):
                         {'$match': query},
                         {'$sample': {'size': true_limit}}
                     ]
-                    results = list(db_call(db=match_collection, query=metaquery, mode='aggregate'))
+                    results = list(db_call(db=match_collection, query=metaquery, mode='aggregate', verbose=verbose))
 
                 else:
                     metaquery = [
                         {'$sample': {'size': true_limit}}
                     ]
-                    results = list(db_call(db=match_collection, query=metaquery, mode='aggregate'))
+                    results = list(db_call(db=match_collection, query=metaquery, mode='aggregate', verbose=verbose))
 
             else:
                 results = []
-                print("datasets restored from file.".format())
+                if verbose:
+                    print("datasets restored from file.".format())
         else:
             if query:
-                results = list(db_call(db=match_collection, query=query, mode='find'))
+                results = list(db_call(db=match_collection, query=query, mode='find', verbose=verbose))
             else:
-                results = list(db_call(db=match_collection, query=None, mode='find'))
+                results = list(db_call(db=match_collection, query=None, mode='find', verbose=verbose))
             size = len(results) // 3
 
         if len(results) >= true_limit:
@@ -699,23 +670,21 @@ class Dataset(object):
                 results = validate_results
 
             for index, match in enumerate(results):
-                match['is training'] = True
-                print('\rstarting \'{}\' dataset: item {} of {}'.format(backup_file[:-4], index+1+offset, len(results)+offset), end='')
+                match['is_training'] = True
+                if verbose:
+                    print('\rstarting \'{}\' dataset: item {} of {}'.format(backup_file[:-4], index+1+offset, len(results)+offset), end='')
                 if match['_id'] in self.match_list:
                     continue
                 else:
                     for name in match['wrestlers']:
                         temp_wrestler = Wrestler(name=name, match_dict=match)
-                        self.update(dataset=temp_wrestler.history, type=dataset_name)
+                        self.update(dataset=temp_wrestler.history, mode=dataset_name)
                     if index % self.backup_every == 0 and index > 0:
                         self.csv_output(mode=dataset_name, backup_file=backup_file)
             # final backup after finishing
-            self.csv_output(mode=dataset_name, backup_file=backup_file)
-            print('\r\'{}\' dataset finished.'.format(backup_file[:-4]))
-
-        for dataset in [self.train_dataset, self.test_dataset, self.validate_dataset]:
-            if 'match_id' in dataset.keys():
-                 dataset.pop('match_id')
+            self.csv_output(mode=dataset_name, backup_file=backup_file, verbose=verbose)
+            if verbose:
+                print('\r\'{}\' dataset finished.'.format(backup_file[:-4]))
 
     def csv_input(self, dataset_name):
         assert dataset_name in ['train', 'test', 'validate']
@@ -729,7 +698,7 @@ class Dataset(object):
         try:
             with open(backup_file, 'r') as dataset_backup:
                 dataset = pd.read_csv(dataset_backup)
-                self.update(dataset=dataset, type=dataset_name)
+                self.update(dataset=dataset, mode=dataset_name)
 
             if dataset_name == 'train':
                 match_list = set(self.train_dataset['match_id'])
@@ -745,7 +714,8 @@ class Dataset(object):
                 self.validate_offset = len(match_list)
 
         except FileNotFoundError:
-            print("backup file '{}' not found, starting from scratch.".format(backup_file))
+            if verbose:
+                print("backup file '{}' not found, starting from scratch.".format(backup_file))
             if dataset_name == 'train':
                 self.train_offset = 0
             elif dataset_name == 'test':
@@ -754,7 +724,8 @@ class Dataset(object):
                 self.validate_offset = 0
 
         except NotImplementedError as e:  # not sure what error yet
-            print('file is corrupted. removing.\n', e)
+            if verbose:
+                print('file is corrupted. removing.\n', e)
             os.remove(backup_file)
             if dataset_name == 'train':
                 self.train_offset = 0
@@ -763,17 +734,17 @@ class Dataset(object):
             elif dataset_name == 'validate':
                 self.validate_offset = 0
 
-    def update(self, dataset, type=None):
-        assert type in ['train', 'test', 'validate']
+    def update(self, dataset, mode=None):
+        assert mode in ['train', 'test', 'validate']
 
-        if type == 'train':
+        if mode == 'train':
             self.train_dataset = self.train_dataset.append(dataset, ignore_index=True)
-        elif type == 'test':
+        elif mode == 'test':
             self.test_dataset = self.test_dataset.append(dataset, ignore_index=True)
-        elif type == 'validate':
+        elif mode == 'validate':
             self.validate_dataset = self.validate_dataset.append(dataset, ignore_index=True)
 
-    def csv_output(self, mode=None, backup_file=None):
+    def csv_output(self, mode=None, backup_file=None, verbose=False):
         assert isinstance(backup_file, str)
         assert mode in ['train', 'test', 'validate']
 
@@ -792,7 +763,8 @@ class Dataset(object):
         if not dataset.empty:
             with open(backup_file, 'w') as dataset_backup:
                 dataset.to_csv(dataset_backup, index=False, header=True)
-                print(' - backup written', end='')
+                if verbose:
+                    print(' - backup written', end='')
 
 
 class Model(object):
@@ -816,16 +788,21 @@ class Model(object):
 
         # train model
         # self.train_model()
-        self.EXPERIMENTAL_train_model()
+        self.train_model(verbose=verbose)
 
         # evaluate model
-        self.assess_model()
+        self.assess_model(verbose=verbose)
 
     def load_data(self, y_name="wintype"):     # when no longer testing, change limit probably
         # right now this only works for numeric values
-        train_x, train_y = self.train_dataset.astype(int), self.train_dataset.get(y_name).astype(int)
-        test_x, test_y = self.test_dataset.astype(int), self.test_dataset.get(y_name).astype(int)
-        validate_x, validate_y = self.validate_dataset.astype(int), self.validate_dataset.get(y_name).astype(int)
+        train_x = self.train_dataset.astype(int)
+        train_y = self.train_dataset.get(y_name).astype(int)
+
+        test_x = self.test_dataset.astype(int)
+        test_y = self.test_dataset.get(y_name).astype(int)
+
+        validate_x = self.validate_dataset.astype(int)
+        validate_y = self.validate_dataset.get(y_name).astype(int)
 
         return (train_x, train_y), (test_x, test_y), (validate_x, validate_y)
 
@@ -869,7 +846,7 @@ class Model(object):
         # saves a model
         pass
 
-    def EXPERIMENTAL_train_model(self):
+    def train_model(self, verbose=False):
         # calls input_to_model to train a new model
 
         # define feature columns
@@ -959,7 +936,8 @@ class Model(object):
             )
 
         # Train the Model.
-        print('training the {} classifier \'{}\' for {} steps.'.format(self.model_type, self.name, self.train_steps))
+        if verbose:
+            print('training the {} classifier \'{}\' for {} steps.'.format(self.model_type, self.name, self.train_steps))
         classifier.train(
             input_fn=lambda: self.train_input_fn(
                 self.train_x,
@@ -984,7 +962,7 @@ class Model(object):
 
         return probabilities
 
-    def assess_model(self):
+    def assess_model(self, verbose=False):
         # Evaluate the model.
         eval_result = self.classifier.evaluate(
             input_fn=lambda: self.eval_input_fn(
@@ -993,7 +971,8 @@ class Model(object):
         ))
 
         accuracy = eval_result['accuracy']
-        print('Test set accuracy for \'{}\' model: {:.3%}\n'.format(self.name, accuracy))
+        if verbose:
+            print('Test set accuracy for \'{}\' model: {:.3%}\n'.format(self.name, accuracy))
         self.model_accuracy = accuracy
 
     def compare(self, validate_x, validate_y):
@@ -1007,7 +986,7 @@ class Model(object):
         return eval_result['accuracy']
 
 
-def compare_models(model_list):
+def compare_models(model_list, verbose=False):
     assert isinstance(model_list, list)
     for model in model_list:
         assert isinstance(model, Model) or model is None
@@ -1032,7 +1011,8 @@ def compare_models(model_list):
             except AttributeError:
                 model.validate_accuracy = model.compare(model.validate_x, model.validate_y)
 
-            print('\'{}\' model:\nown set: {:.3%}\nsubset: {:.3%}\n'.format(model.name, model.validate_accuracy, subset_result))
+            if verbose:
+                print('\'{}\' model:\nown set: {:.3%}\nsubset: {:.3%}\n'.format(model.name, model.validate_accuracy, subset_result))
             if subset_result > best[0]:
                 best = [subset_result, model.validate_accuracy]
                 winner = model
@@ -1040,7 +1020,8 @@ def compare_models(model_list):
                 best = [subset_result, model.validate_accuracy]
                 winner = model
 
-    print('most accurate model is \'{}\'.\n'.format(winner.name))
+    if verbose:
+        print('most accurate model is \'{}\'.\n'.format(winner.name))
     return winner
 
 
@@ -1052,12 +1033,6 @@ def generate_queries(match):
     query_list = []
 
     titles = match.match_dict.get('titles', 'none').split('\n(title change)')[0]  # trims the title change line off title field
-    try:
-        assert titles in title_dict.keys()
-    except AssertionError:
-        print('this match title ({}) is not correct, probably fix this.'.format(titles))
-        raise
-
     title_query = {'{}'.format(titles): {'titles': '{}'.format(titles)}}
     all_titles_query = {'all titles': {'titles': {'$ne': 'none'}}}
     no_titles_query = {'no title': {'titles': 'none'}}
@@ -1098,9 +1073,131 @@ def generate_queries(match):
     return query_list
 
 
+def set_wintype_dicts(simple=False):
+    if simple:
+        wintype_dict = {
+            "def. (pin)": 1,
+            "(pin)": 1,
+            "def. (sub)": 1,
+            "(sub)": 1,
+            "def. (dq)": 1,
+            "(dq)": 1,
+            "def. (forfeit)": 1,
+            "def. (co)": 1,
+            "def. (ko)": 1,
+            "def. (tko)": 1,
+            "def.": 1,
+
+            "draw (nc)": 90,
+            "draw (dco)": 90,
+            "draw (time)": 90,
+            "draw (ddq)": 90,
+            "draw (dpin)": 90,
+            "draw": 90,
+
+            None: 99
+        }
+
+    else:
+        wintype_dict = {
+            "def. (pin)": 2,
+            "(pin)": 2,
+            "def. (sub)": 3,
+            "(sub)": 3,
+            "def. (dq)": 4,
+            "(dq)": 4,
+            "def. (forfeit)": 5,
+            "def. (co)": 6,
+            "def. (ko)": 7,
+            "def. (tko)": 8,
+            "def.": 1,
+
+            "draw (nc)": 91,
+            "draw (dco)": 92,
+            "draw (time)": 93,
+            "draw (ddq)": 94,
+            "draw (dpin)": 95,
+            "draw": 90,
+
+            None: 99
+        }
+
+    return wintype_dict
+
+
+def set_title_dicts(simple=False):
+    if simple:
+        title_dict = {
+            'none': 0,
+            'unknown title': 99
+        }
+    else:
+        title_dict = {
+            'none': 0,
+            'money in the bank briefcase': 0,
+            '(title change)': 0,
+            'wwe king of the ring': 0,
+
+            'wwe universal championship': 1,
+
+            'wwe intercontinental championship': 2,
+
+            'wwe raw womens title': 3,
+            'wwe raw womens championship': 3,
+            'wwe divas championship': 3,
+            'wwe womens championship (2016)': 3,
+
+            'wwe raw tag team championship': 4,
+            'wwe raw tag championship': 4,
+            'wwe tag team championship': 4,
+
+            'wwe cruiserweight title': 4,
+            'wwe cruiserweight championship': 4,
+            'cruiserweight classic championship\nwwe cruiserweight title': 4,
+
+            'wwe championship': 11,
+            'wwe world heavyweight championship': 11,
+            'wwe world championship': 11,
+            'world heavyweight championship (wwe)': 11,
+
+            'wwe united states championship': 12,
+
+            'wwe smackdown womens championship': 13,
+            'wwe smackdown womens title': 13,
+
+            'wwe smackdown tag team championship': 14,
+            'wwe smackdown tag championship': 14,
+
+            'wwe united states championship\nwwe world heavyweight championship': 20,
+
+            'nxt championship': 31,
+
+            'mxt north american championship': 32,
+
+            'wwe united kingdom championship': 33,
+
+            'nxt womens title': 34,
+
+            'nxt tag team titles': 35,
+            'dusty rhodes tag team classic cup': 35,
+
+            'unknown title': 99
+        }
+
+    return title_dict
+
+
 def main():
     # the main goddamn program, duh
     print('\n\n\n\n\nk starting now.')
+
+    global wintype_dict
+    global title_dict
+    global verbose
+
+    verbose = False
+    wintype_dict = set_wintype_dicts(simple=True)
+    title_dict = set_title_dicts(simple=True)
 
     # wrestlemania 34 matches start here
     wrestlefestival = Event(event_dict={
@@ -1124,7 +1221,7 @@ def main():
                    'teams':[{'members': ['kurt angle']},     # rhonda rousey isn't in the db
                             {'members': ['stephanie mcmahon', 'triple h']}]},
 
-            { 'matchtype': 'tag',
+            {'matchtype': 'tag',
                     'teams':[{'members': ['sami zayn', 'kevin owens']},
                              {'members': ['shane mcmahon', 'daniel bryan']}]},
 
@@ -1176,6 +1273,7 @@ def main():
                             {'members': ['mustafa ali']}]},
 
             {'name': 'mens battle royale',
+                   'matchtype': 'battle royale',
                    'teams':[
                             {'members': ['Aiden English']},
                             {'members': ['Konnor']},
@@ -1209,6 +1307,7 @@ def main():
                             {'members': ['matt hardy']}]},
 
             {'name': 'womens battle royale',
+                   'matchtype': 'womens battle royale',
                    'teams':[
                        {'members': ['Carmella']},
                        {'members': ['Dana Brooke']},
@@ -1244,25 +1343,27 @@ def main():
 
         for item in query_list:
             for name, query in item.items():
-                try:
+                if name in dataset_dict.keys():
                     match_dataset_list.append(dataset_dict[name])
-                except LookupError:
-                    dataset_dict[name] = Dataset(limit=9000, query=query, name=name)
+                else:
+                    dataset_dict[name] = Dataset(limit=9000, query=query, name=name, verbose=verbose)
                     match_dataset_list.append(dataset_dict[name])
 
-                try:
+                if name in model_dict.keys():
                     match_model_list.append(model_dict[name])
-                except LookupError:
+                else:
                     if dataset_dict[name].train_dataset.shape[0] < dataset_minimum:
-                        print('dataset \'{}\' under minimum number of entries; skipping model build.\n'.format(name))
+                        if verbose:
+                            print('dataset \'{}\' under minimum number of entries; skipping model build.\n'.format(name))
                         model_dict[name] = None
                         match_model_list.append(model_dict[name])
                     else:
                         model_dict[name] = Model(train_steps=2500, model_type='hybrid', dataset=dataset_dict[name], name=name, layer_specs=[80, 90, 100])
                         match_model_list.append(model_dict[name])
 
-        winner = compare_models(model_list=match_model_list)
-        match.predict(winner)
+        prediction = match.aggregate_predict(model_list=match_model_list)
+
+        print(prediction['prediction_string'].format(**prediction))
 
 
 def test():
