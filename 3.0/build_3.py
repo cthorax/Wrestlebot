@@ -126,6 +126,7 @@ def renamethislater(match_counter, browser, type):
 
     return temp_names, temp_urls
 
+
 def clean_text(text):
     import unicodedata
 

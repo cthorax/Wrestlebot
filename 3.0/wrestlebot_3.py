@@ -684,7 +684,7 @@ class Dataset(object):
             # final backup after finishing
             self.csv_output(mode=dataset_name, backup_file=backup_file, verbose=verbose)
             if verbose:
-                print('\r\'{}\' dataset finished.'.format(backup_file[:-4]))
+                print(' - dataset finished.'.format(backup_file[:-4]))
 
     def csv_input(self, dataset_name):
         assert dataset_name in ['train', 'test', 'validate']
@@ -1036,8 +1036,10 @@ def generate_queries(match):
     title_query = {'{}'.format(titles): {'titles': '{}'.format(titles)}}
     all_titles_query = {'all titles': {'titles': {'$ne': 'none'}}}
     no_titles_query = {'no title': {'titles': 'none'}}
+    title_is_none = titles == 'none'
+
     title_queries = []
-    if title_query.values() == no_titles_query.values():
+    if title_is_none:
         title_queries.append(no_titles_query)
     else:
         title_queries.extend([title_query, all_titles_query])
@@ -1047,12 +1049,14 @@ def generate_queries(match):
     for index, monogram in enumerate(matchtype_monograms):
         matchtype_monograms[index] = '{} '.format(monogram)     # all need to end in spaces for next step to work right
 
-    matchtype_ngrams = itertools.combinations(matchtype_monograms, r=len(matchtype_monograms))
     matchtype_queries = []
-    for ngram in matchtype_ngrams:
-        clean_ngram = ngram[0].strip()
-        temp_query = {'matchtype contains \'{}\''.format(clean_ngram): {'matchtype': {'$regex': '{}'.format(clean_ngram)}}}
-        matchtype_queries.append(temp_query)
+    for length in range(1, len(matchtype_monograms)+1).__reversed__():     # +1 because i hate how range works
+        string_template = '{}'*length
+        matchtype_ngrams = itertools.combinations(matchtype_monograms, r=length)
+        for ngram in matchtype_ngrams:
+            clean_ngram = string_template.format(*ngram).strip()
+            temp_query = {'matchtype contains \'{}\''.format(clean_ngram): {'matchtype': {'$regex': '{}'.format(clean_ngram)}}}
+            matchtype_queries.append(temp_query)
 
     for t in title_queries:
         for t_name, t_query in t.items():
@@ -1195,7 +1199,7 @@ def main():
     global title_dict
     global verbose
 
-    verbose = False
+    verbose = True
     wintype_dict = set_wintype_dicts(simple=True)
     title_dict = set_title_dicts(simple=True)
 
