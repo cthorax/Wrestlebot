@@ -716,6 +716,21 @@ if __name__ == '__main__':
                         'key_type': 'TEXT',
                     }
                 ]
+            },
+            {
+                'table_name': 'alias_table',
+                'table_params': [
+                    {
+                        'key_name': 'alias',
+                        'key_type':  'TEXT',
+                        'unique_flag': True,
+                        'not_null_flag': True
+                    },
+                    {
+                        'key_name': 'id',
+                        'key_type': 'INTEGER',
+                    },
+                ]
             }
         ]
         team_table_dict = {
