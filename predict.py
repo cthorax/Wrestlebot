@@ -6,6 +6,10 @@ import tensorflow as tf
 import pandas as pd
 import numpy as np
 
+team_start_marker = ''
+team_end_marker = 'T'
+wrestler_start_marker = 'x'
+wrestler_end_marker = 'y'
 
 def clean_text(text):
     import unicodedata
@@ -42,22 +46,40 @@ def make_prediction_series(alias, event_date, db=29991231, number_of_history_mat
     prediction_series = pd.Series(0, index=index_list)
     stats_query = db.query("SELECT dob, nationality FROM wrestlers_table WHERE id = '{id}'".format(id=id)).as_dict()
     
-    global max_team_size
-    global max_competitors
-    wrestler_query = "SELECT id FROM teams_table WHERE wrestler00 = '{id}'".format(id=id)
-    for wrestler_number in range(1, max_team_size):
-        wrestler_query_template = "wrestler{number} = '{id}'"
-        wrestler_query = " OR ".join([wrestler_query, wrestler_query_template.format(id=id, number=str(wrestler_number).zfill(2))])
-                                      
-    teams_query = db.query(wrestler_query).as_dict()
-    competitors_query = db.query("SELECT id FROM competitors_table WHERE teamXX = '{id}'".format(id=id)).as_dict()
-    history_query = db.query("SELECT date, wintype, title, matchtype, competitors WHERE date < {event_date} AND competitors IN (\nSELECT id FROM competitors_table WHERE  ) FROM match_table ORDER BY date DESC".format()).as_dict()
-
+    matches_query_string = """SELECT m.date, m.wintype, m.title, m.matchtype, c.competitors FROM match_table m JOIN competitor_table c ON m.id = c.id WHERE date < {event} AND id IN (
+    SELECT id as match_id FROM competitors_table WHERE competitors LIKE '%{start}{id}{end}%'
+    )
+    ORDER BY date DESC, LIMIT {limit}".format(start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches)""".format(
+        event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_markers
+    )
+    matches_query = db.query(matches_query_string).as_dict()
+    
     prediction_series['id'] = id
     prediction_series['dob'] = stats_query.get('dob',0)
     prediction_series['nationality'] = stats_query.get('nationality',0)
-                              
-                              
+    for number, match in enumerate(matches_query):
+        padded_number = str(number).zfill(padding)
+
+        prediction_series['days_since_match'.format(padded_number)] = event_date - match['date']
+        prediction_series['wintype_match'.format(padded_number)] = match['wintype']
+        prediction_series['title_match'.format(padded_number)] = match['title']
+        prediction_series['matchtype_match'.format(padded_number)] = match['matchtype']
+        
+        competitors_list = []
+        for team in match['competitors'].split(team_end_marker):
+            competitors_list.append(team[1,-1].strip(wrestler_start_marker).split(wrestler_end_marker))
+        for team in competitors_list:
+            if id in team:
+                prediction_series['allies_match'.format(padded_number)] = len(team)-1
+            else:
+                prediction_series['opponents_match'.format(padded_number)] += len(team)
+            
+        if id in competitors_list[0]:
+            prediction_series['won_match'.format(padded_number)] = 1
+        else:
+            prediction_series['won_match'.format(padded_number)] = 0
+        
+    return prediction_series
     
 if __name__ == '__main__':
     pass
