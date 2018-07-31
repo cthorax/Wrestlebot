@@ -33,13 +33,6 @@ def init_table(table_dict, db):
                 'unique_flag': True or False,
                 'not_null_flag': True or False
             }
-        ],
-        'foreign_keys': [
-            {
-                'key_name': string required,
-                'other_table': string required,
-                'other_table_key': string required
-            }
         ]
      }
 
@@ -52,7 +45,6 @@ def init_table(table_dict, db):
 
     drop_template = 'DROP TABLE IF EXISTS {table_name};'
     create_template = 'CREATE TABLE {table_name} (\n{table_params}\n);'
-    foreign_key_template = 'FOREIGN KEY({key_name}) REFERENCES {other_table}({other_table_key}),\n'
 
     drop_query = drop_template.format(**table_dict)
     db.query(drop_query)
@@ -85,16 +77,47 @@ def init_table(table_dict, db):
 
         param_queries += param_query
 
-    foreign_key_queries = ''
-    for foreign_key in table_dict.get('foreign_keys', []):
-        foreign_key_query = foreign_key_template.format(**foreign_key)
-        foreign_key_queries += foreign_key_query
+    param_queries = param_queries[:-2]  # strips trailing ',\n'
 
-    if foreign_key_queries:
-        foreign_key_queries = foreign_key_queries[:-2]    # strips trailing ',\n'
-        param_queries += foreign_key_queries
-    else:
-        param_queries = param_queries[:-2]  # strips trailing ',\n'
+    create_query = create_template.format(table_name=table_dict.get('table_name'), table_params=param_queries)
+    db.query(create_query)
+
+
+def init_virtual_table(table_dict, db):
+    """
+    drops and creates a table based on a passed dict into the specified db
+
+    :param table_dict:
+    dict format below. at least one table_param entry required, no foreign_keys required
+    {
+        'table_name': string,
+        'table_params': [
+            {
+                'key_name': string required
+            }
+        ]
+     }
+
+    :param db:
+    active records db instance
+
+    :return:
+    none
+    """
+
+    drop_template = 'DROP TABLE IF EXISTS {table_name};'
+    create_template = 'CREATE VIRTUAL TABLE {table_name} USING FTS5 (\n{table_params}\n);'
+
+    drop_query = drop_template.format(**table_dict)
+    db.query(drop_query)
+
+    param_queries = ''
+    for param in table_dict['table_params']:
+
+        param_query = '{key_name}, '.format(key_name=param.get('key_name'))
+        param_queries += param_query
+
+    param_queries = param_queries[:-2]  # strips trailing ', '
 
     create_query = create_template.format(table_name=table_dict.get('table_name'), table_params=param_queries)
     db.query(create_query)
@@ -160,7 +183,7 @@ def page_parse(browser, date, card_dict):
             match_number = match_counter - 1
             wrestler_urls = []
 
-            winner_urls = match_parse(match_counter, browser, type='winner')
+            winner_urls = match_parse(match_counter, browser, type='winner', db=db)
             wrestler_urls.extend(winner_urls)
 
             wintype = browser.find_element_by_css_selector(
@@ -169,7 +192,7 @@ def page_parse(browser, date, card_dict):
             if not wintype:
                 wintype = 'def.'  # only one blank wintype found so far but it was a huge PITA, so.
 
-            loser_urls = match_parse(match_counter, browser, type='loser')
+            loser_urls = match_parse(match_counter, browser, type='loser', db=db)
             wrestler_urls.extend(loser_urls)
 
             teams = []
@@ -274,14 +297,14 @@ def update_match_table(match_dict_list, db):
     :return:
     none
     """
-    insert_template = "INSERT INTO match_table (match_id, date, duration, winner, wintype, titles, matchtype, card, competitors) VALUES ('{match_id}', {date}, {duration}, {winner}, {wintype}, {titles}, {matchtype}, '{card}', {competitors})"
+    match_insert_template = "INSERT INTO match_table (match_id, date, duration, winner, wintype, titles, matchtype, card) VALUES ('{match_id}', {date}, {duration}, {winner}, {wintype}, {titles}, {matchtype}, '{card}')"
+    team_insert_template = "INSERT INTO team_table (match_id, competitors) VALUES ('{match_id}', {competitors})"
 
     for match_dict in match_dict_list:
         match_insert_dict = {
             'match_id': match_dict['match_id'],
             'date': match_dict['date'],
             'duration': match_dict['duration'],
-            'winner': -1,
             'wintype': -1,
             'titles': -1,
             'matchtype': -1,
@@ -298,58 +321,7 @@ def update_match_table(match_dict_list, db):
                 if not wrestler_query:
                     update_wrestler_table(profightdb_id=wrestler_url, db=db)
                 
-        team_id_list_for_competitor_id = []
-        for team_list in match_dict['teams']:
-            wrestler_id_list_for_team_id = []
-            for wrestler_url in team_list:
-                wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
-                wrestler_id = wrestler_query[0].get('id')
-                wrestler_id_list_for_team_id.append(wrestler_id)
-            wrestler_id_list_for_team_id.sort()     # prevent combinations by sorting
-            team_members_string = ''
-            for number, wrestler_id in enumerate(wrestler_id_list_for_team_id):
-                if team_members_string:
-                    team_members_string += " AND wrestler{number} = {wrestler_id}".format(number=str(number).zfill(2), wrestler_id=wrestler_id)
-                else:
-                    team_members_string = "wrestler00 = {}".format(wrestler_id)
-            team_members_string += ' AND wrestler{} is NULL;'.format(str(len(wrestler_id_list_for_team_id)).zfill(2))
 
-            if len(wrestler_id_list_for_team_id)+1 > max_team_size:
-                update_team_size(new_value=len(wrestler_id_list_for_team_id)+1, db=db)
-
-            team_query = db.query('SELECT id FROM team_table WHERE {}'.format(team_members_string)).as_dict()
-            if team_query:
-                team_id = team_query[0].get('id')
-            else:
-                update_team_table(team_id_list=wrestler_id_list_for_team_id, db=db)
-                team_query = db.query('SELECT id FROM team_table WHERE {}'.format(team_members_string)).as_dict()
-                team_id = team_query[0].get('id')
-
-            team_id_list_for_competitor_id.append(team_id)
-        team_id_list_for_competitor_id.sort()     # prevent combinations by sorting
-
-        competitor_composition_string = ''
-        for number, team_id in enumerate(team_id_list_for_competitor_id):
-            if competitor_composition_string:
-                competitor_composition_string += ' AND team{number} = {team_id}'.format(
-                    number=str(number).zfill(2), team_id=team_id)
-            else:
-                competitor_composition_string = 'team00 = {}'.format(team_id)
-        competitor_composition_string += ' AND team{} is NULL;'.format(str(len(team_id_list_for_competitor_id)).zfill(2))
-
-        if len(team_id_list_for_competitor_id)+1 > max_competitors:
-            update_competitor_size(new_value=len(team_id_list_for_competitor_id)+1, db=db)
-
-        competitor_query = db.query('SELECT id FROM competitors_table WHERE {}'.format(competitor_composition_string)).as_dict()
-        if competitor_query:
-            competitor_id = competitor_query[0].get('id')
-        else:
-            update_competitors_table(competitor_id_list=team_id_list_for_competitor_id, db=db)
-            competitor_query = db.query('SELECT id FROM competitors_table WHERE {}'.format(competitor_composition_string)).as_dict()
-            competitor_id = competitor_query[0].get('id')
-
-        match_insert_dict['competitors'] = competitor_id
-        
         wintype_query = db.query("SELECT id FROM wintype_table WHERE wintype = '{}'".format(match_dict["wintype"])).as_dict()
         if wintype_query:
             match_insert_dict['wintype'] = wintype_query[0].get('id')
@@ -374,61 +346,44 @@ def update_match_table(match_dict_list, db):
             matchtype_query = db.query("SELECT id FROM matchtype_table WHERE matchtype = '{}'".format(match_dict["matchtype"])).as_dict()
             match_insert_dict['matchtype'] = matchtype_query[0].get('id')
 
+        db.query(match_insert_template.format(**match_insert_dict))
+
+        team_insert_dict = {
+            'match_id': match_dict['match_id'],
+            'competitors': ''
+        }
+
+        team_start_marker = 'A'
+        team_end_marker = 'B'
+        wrestler_start_marker = 'x'
+        wrestler_end_marker = 'y'
+
         winning_wrestler_id_list_for_team_id = []
         for winning_wrestler_url in match_dict['winners']:
             winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url))
             winning_wrestler_id_list_for_team_id.append(winning_wrestler_query[0].get('id'))
-        winning_wrestler_id_list_for_team_id.sort()  # prevent combinations by sorting
-        winning_team_members_string = ''
-        for winning_number, winning_wrestler_id in enumerate(winning_wrestler_id_list_for_team_id):
-            if winning_team_members_string:
-                winning_team_members_string += " AND wrestler{number} = {wrestler_id}".format(
-                    number=str(winning_number).zfill(2), wrestler_id=winning_wrestler_id)
-            else:
-                winning_team_members_string = 'wrestler00 = {}'.format(winning_wrestler_id)
-        winning_team_members_string += ' AND wrestler{} IS NULL;'.format(str(len(winning_wrestler_id_list_for_team_id)).zfill(2))
+        winning_wrestler_id_list_for_team_id.sort()
+        winning_team_string = ''
+        for winning_wrestler_id in winning_wrestler_id_list_for_team_id:
+            winning_team_string = winning_team_string.join([wrestler_start_marker, str(winning_wrestler_id), wrestler_end_marker])
+        competitor_string = ''.join([team_start_marker, winning_team_string, team_end_marker])
+        for team_list in match_dict['teams']:
+            team_id_list = []
+            for wrestler_url in team_list:
+                wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
+                wrestler_id = wrestler_query[0].get('id')
+                team_id_list.append(wrestler_id)
+            team_id_list.sort()
+            team_string = ''
+            for id in team_id_list:
+                if id in winning_wrestler_id_list_for_team_id:
+                    break
+                team_string = team_string.join([wrestler_start_marker, str(id), wrestler_end_marker])
+            if team_string:
+                competitor_string = ''.join([competitor_string, team_start_marker, team_string, team_end_marker])
 
-        if len(winning_wrestler_id_list_for_team_id)+1 > max_team_size:
-            update_team_size(new_value=len(winning_wrestler_id_list_for_team_id)+1, db=db)
-
-        winning_team_query = db.query('SELECT id FROM team_table WHERE {}'.format(winning_team_members_string)).as_dict()
-        try:
-            winning_team_id = winning_team_query[0].get('id')
-        except IndexError:
-            pass
-        match_insert_dict['winner'] = winning_team_id
-
-        db.query(insert_template.format(**match_insert_dict))
-
-
-def update_competitors_table(competitor_id_list, db):
-    insert_template = "INSERT INTO competitors_table ({columns}) VALUES ({values})"
-    columns = ''
-    values = ''
-    for number, team_id in enumerate(competitor_id_list):
-        if columns:
-            columns += ', team{number}'.format(number=str(number).zfill(2))
-        if values:
-            values += ', {team_id}'.format(team_id=team_id)
-        else:
-            values = '{team_id}'.format(team_id=team_id)
-            columns = 'team00'
-    db.query(insert_template.format(columns=columns, values=values))
-
-
-def update_team_table(team_id_list, db):
-    insert_template = "INSERT INTO team_table ({columns}) VALUES ({values})"
-    columns = ''
-    values = ''
-    for number, wrestler_id in enumerate(team_id_list):
-        if columns:
-            columns += ', wrestler{number}'.format(number=str(number).zfill(2))
-        if values:
-            values += ', {wrestler_id}'.format(wrestler_id=wrestler_id)
-        else:
-            values = '{wrestler_id}'.format(wrestler_id=wrestler_id)
-            columns = 'wrestler00'
-    db.query(insert_template.format(columns=columns, values=values))
+        team_insert_dict['competitors'] = competitor_string
+        db.query(match_insert_template.format(**team_insert_template))
 
 
 def update_wrestler_table(profightdb_id, db):
@@ -456,30 +411,49 @@ def update_wrestler_table(profightdb_id, db):
     db.query(insert_template.format(**insert_dict))
 
 
-def match_parse(match_counter, browser, type):
-    other_match_text_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({}) > a:nth-child({})"
-    alternate_text_template =   "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({}) > i > a:nth-child({})"
+def match_parse(match_counter, browser, type, db):
+    match_text_template =   "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({}) > a:nth-child({})"
+    italic_text_template =  "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({}) > i > a:nth-child({})"
 
     if type == "winner":
         type_number = 2
     elif type == "loser":
         type_number = 4
 
-    temp_urls = []
+    alias_url_dict = {}
     for counter in range(1, 75):
         try:
-            url = browser.find_element_by_css_selector(other_match_text_template.format(
-                match_counter, type_number, counter)).get_attribute("href")[36:-5]
-            temp_urls.append(url)
+            link = browser.find_element_by_css_selector(match_text_template.format(
+                match_counter, type_number, counter))
+            url = link.get_attribute("href")[36:-5]
+            alias = link.get_attribute("text")
+            clean_alias = clean_text(alias)
+            alias_url_dict[clean_alias] = url
         except selenium.common.exceptions.NoSuchElementException:
             try:
-                url = browser.find_element_by_css_selector(alternate_text_template.format(
-                    match_counter, type_number, counter)).get_attribute("href")[36:-5]
-                temp_urls.append(url)
+                link = browser.find_element_by_css_selector(italic_text_template.format(
+                    match_counter, type_number, counter))
+                url = link.get_attribute("href")[36:-5]
+                alias = link.get_attribute("text")
+                clean_alias = clean_text(alias)
+                alias_url_dict[clean_alias] = url
             except selenium.common.exceptions.NoSuchElementException:
                 break
 
-    return temp_urls
+    update_alias_table(alias_url_dict, db=db)
+
+    just_url_list = list(alias_url_dict.values())
+    return just_url_list
+
+
+def update_alias_table(alias_and_url_dict, db):
+    for alias, url in alias_and_url_dict.items():
+        id = int(url.split('-')[-1])
+        dupecheck = db.query("SELECT alias FROM alias_table WHERE alias = '{alias}'".format(alias=alias)).as_dict()
+        if dupecheck:
+            continue
+        else:
+            db.query("INSERT INTO alias_table (alias, id) VALUES ('{alias}', {id})".format(alias=alias, id=id))
 
 
 def clean_text(text):
@@ -528,41 +502,10 @@ def vacuum(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), 
         db.query('VACUUM;')
 
 
-def update_team_size(new_value, db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), verbose=False):
-    import sqlalchemy
-    global max_team_size
-    for number in range(max_team_size, new_value):
-        formatted_number = str(number).zfill(2)
-        try:
-            db.query('ALTER TABLE team_table ADD COLUMN wrestler{} INTEGER'.format(formatted_number))
-        except sqlalchemy.exc.OperationalError:
-            pass
-
-    max_team_size = new_value
-
-
-def update_competitor_size(new_value, db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), verbose=False):
-    import sqlalchemy
-    global max_competitors
-    for number in range(max_competitors, new_value):
-        formatted_number = str(number).zfill(2)
-        try:
-            db.query('ALTER TABLE competitors_table ADD COLUMN team{} INTEGER'.format(formatted_number))
-        except sqlalchemy.exc.OperationalError:
-            pass
-
-    max_competitors = new_value
-
-
 if __name__ == '__main__':
     db = records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')
-    init = False
+    init = True
     verbose = True
-
-    global max_team_size
-    global max_competitors
-    max_team_size = 1
-    max_competitors = 1
 
     if init:
         table_dict_list = [
@@ -614,29 +557,7 @@ if __name__ == '__main__':
                     },
                     {
                         'key_name': 'competitors',
-                        'key_type': 'INTEGER',
-                    }
-                ],
-                'foreign_keys': [
-                    {
-                        'key_name': 'winner',
-                        'other_table': 'team_table',
-                        'other_table_key': 'id'
-                    },
-                    {
-                        'key_name': 'titles',
-                        'other_table': 'title_table',
-                        'other_table_key': 'id'
-                    },
-                    {
-                        'key_name': 'matchtype',
-                        'other_table': 'matchtype_table',
-                        'other_table_key': 'id'
-                    },
-                    {
-                        'key_name': 'competitors',
-                        'other_table': 'competitors_table',
-                        'other_table_key': 'id'
+                        'key_type': 'TEXT',
                     }
                 ]
              },
@@ -733,45 +654,26 @@ if __name__ == '__main__':
                 ]
             }
         ]
-        team_table_dict = {
-                'table_name': 'team_table',
-                'table_params': [
-                    {
-                        'key_name': 'id',
-                        'key_type': 'INTEGER',
-                        'primary_key_flag': True
-                    }
-                ]
-            }
-        for number in range(max_team_size):
-            params_dict = {
-                    'key_name': 'wrestler{}'.format(str(number).zfill(2)),
-                    'key_type': 'INTEGER'
-                }
-            team_table_dict['table_params'].append(params_dict)
-        table_dict_list.append(team_table_dict)
-
-        competitors_table_dict = {
-            'table_name': 'competitors_table',
-            'table_params': [
-                {
-                    'key_name': 'id',
-                    'key_type': 'INTEGER',      # pretty quickly gets larger than 2^64, which is the INTEGER limit.
-                    'primary_key_flag': True
-                }
-            ],
-            'foreign_keys': []
-        }
-        for number in range(max_competitors):
-            params_dict = {
-                    'key_name': 'team{}'.format(str(number).zfill(2)),
-                    'key_type': 'INTEGER'
-                }
-            competitors_table_dict['table_params'].append(params_dict)
-        table_dict_list.append(competitors_table_dict)
 
         for table_dict in table_dict_list:
             init_table(table_dict=table_dict, db=db)
+
+        virtual_table_dict_list = [
+            {
+                'table_name': 'team_table',
+                'table_params': [
+                    {
+                        'key_name': 'team_string'
+                    },
+                    {
+                        'key_name': 'match_id'
+                    }
+                ]
+             }
+        ]
+        for virtual_table_dict in virtual_table_dict_list:
+            init_virtual_table(table_dict=virtual_table_dict, db=db)
+
     vacuum(db=db, verbose=verbose)
 
     matches = []
