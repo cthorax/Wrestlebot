@@ -663,10 +663,12 @@ if __name__ == '__main__':
                 'table_name': 'team_table',
                 'table_params': [
                     {
-                        'key_name': 'team_string'
+                        'key_name': 'team_string',
+                        'key_type': 'TEXT'
                     },
                     {
                         'key_name': 'match_id'
+                        'key_type': INTEGER
                     }
                 ]
              }
