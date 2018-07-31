@@ -17,8 +17,8 @@ chrome_options.add_experimental_option('prefs', {'profile.managed_default_conten
                                                  'profile.managed_default_content_settings.media_stream': 2})
 
 
-team_start_marker = 'A'
-team_end_marker = 'B'
+team_start_marker = ''
+team_end_marker = 'T'
 wrestler_start_marker = 'x'
 wrestler_end_marker = 'y'
 
