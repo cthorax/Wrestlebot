@@ -17,6 +17,11 @@ chrome_options.add_experimental_option('prefs', {'profile.managed_default_conten
                                                  'profile.managed_default_content_settings.media_stream': 2})
 
 
+team_start_marker = 'A'
+team_end_marker = 'B'
+wrestler_start_marker = 'x'
+wrestler_end_marker = 'y'
+
 def init_table(table_dict, db):
     """
     drops and creates a table based on a passed dict into the specified db
@@ -353,11 +358,6 @@ def update_match_table(match_dict_list, db):
             'competitors': ''
         }
 
-        team_start_marker = 'A'
-        team_end_marker = 'B'
-        wrestler_start_marker = 'x'
-        wrestler_end_marker = 'y'
-
         winning_wrestler_id_list_for_team_id = []
         for winning_wrestler_url in match_dict['winners']:
             winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url))
@@ -672,8 +672,8 @@ if __name__ == '__main__':
              }
         ]
         for virtual_table_dict in virtual_table_dict_list:
-            init_virtual_table(table_dict=virtual_table_dict, db=db)
-
+            # init_virtual_table(table_dict=virtual_table_dict, db=db)    # disabled until i decide to implement FTS5; using LIKE instead until then.
+            init_table(table_dict=virtual_table_dict, db=db)
     vacuum(db=db, verbose=verbose)
 
     matches = []
