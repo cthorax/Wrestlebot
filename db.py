@@ -302,8 +302,8 @@ def update_match_table(match_dict_list, db):
     :return:
     none
     """
-    match_insert_template = "INSERT INTO match_table (match_id, date, duration, winner, wintype, titles, matchtype, card) VALUES ('{match_id}', {date}, {duration}, {winner}, {wintype}, {titles}, {matchtype}, '{card}')"
-    team_insert_template = "INSERT INTO team_table (match_id, competitors) VALUES ('{match_id}', {competitors})"
+    match_insert_template = "INSERT INTO match_table (match_id, date, duration, wintype, titles, matchtype, card) VALUES ('{match_id}', {date}, {duration}, {wintype}, {titles}, {matchtype}, '{card}')"
+    team_insert_template = "INSERT INTO team_table (match_id, competitors) VALUES ('{match_id}', '{competitors}')"
 
     for match_dict in match_dict_list:
         match_insert_dict = {
@@ -313,8 +313,7 @@ def update_match_table(match_dict_list, db):
             'wintype': -1,
             'titles': -1,
             'matchtype': -1,
-            'card': match_dict['card'],
-            'competitors': -1
+            'card': match_dict['card']
         }
 
         for wrestler_url in match_dict['wrestlers']:
@@ -383,7 +382,7 @@ def update_match_table(match_dict_list, db):
                 competitor_string = ''.join([competitor_string, team_start_marker, team_string, team_end_marker])
 
         team_insert_dict['competitors'] = competitor_string
-        db.query(match_insert_template.format(**team_insert_template))
+        db.query(team_insert_template.format(**team_insert_dict))
 
 
 def update_wrestler_table(profightdb_id, db):
@@ -663,12 +662,12 @@ if __name__ == '__main__':
                 'table_name': 'team_table',
                 'table_params': [
                     {
-                        'key_name': 'team_string',
+                        'key_name': 'competitors',
                         'key_type': 'TEXT'
                     },
                     {
-                        'key_name': 'match_id'
-                        'key_type': INTEGER
+                        'key_name': 'match_id',
+                        'key_type': 'TEXT'
                     }
                 ]
              }
