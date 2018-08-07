@@ -316,16 +316,6 @@ def update_match_table(match_dict_list, db):
             'card': match_dict['card']
         }
 
-        for wrestler_url in match_dict['wrestlers']:
-            wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
-            if not wrestler_query:
-                # retry
-                id = int(wrestler_url.split('-')[-1])
-                wrestler_query = db.query("SELECT id FROM wrestler_table WHERE id = {}".format(id)).as_dict()
-                if not wrestler_query:
-                    update_wrestler_table(profightdb_id=wrestler_url, db=db)
-                
-
         wintype_query = db.query("SELECT id FROM wintype_table WHERE wintype = '{}'".format(match_dict["wintype"])).as_dict()
         if wintype_query:
             match_insert_dict['wintype'] = wintype_query[0].get('id')
@@ -359,7 +349,14 @@ def update_match_table(match_dict_list, db):
 
         winning_wrestler_id_list_for_team_id = []
         for winning_wrestler_url in match_dict['winners']:
-            winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url))
+            winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url)).as_dict()
+            if not winning_wrestler_query:
+                # retry
+                winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url)).as_dict()
+                if not winning_wrestler_query:
+                    update_wrestler_table(profightdb_id=winning_wrestler_url, db=db)
+                    winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url)).as_dict()
+
             winning_wrestler_id_list_for_team_id.append(winning_wrestler_query[0].get('id'))
         winning_wrestler_id_list_for_team_id.sort()
         winning_team_string = ''
@@ -370,6 +367,13 @@ def update_match_table(match_dict_list, db):
             team_id_list = []
             for wrestler_url in team_list:
                 wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
+                if not wrestler_query:
+                    # retry
+                    wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
+                    if not wrestler_query:
+                        update_wrestler_table(profightdb_id=wrestler_url, db=db)
+                        wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
+
                 wrestler_id = wrestler_query[0].get('id')
                 team_id_list.append(wrestler_id)
             team_id_list.sort()
@@ -503,7 +507,7 @@ def vacuum(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), 
 
 if __name__ == '__main__':
     db = records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')
-    init = True
+    init = False
     verbose = True
 
     if init:
