@@ -52,10 +52,13 @@ ORDER BY date DESC, LIMIT {limit}"""
                     index_list.extend("w{wn}m{mn}_{temp}".format(wm=wrestler_number, mn=match_number. temp=history_template))
     
     if series_type in ['test', 'train']:
-        index_list.extend(['current_title', 'current_matchtype', 'current_allies', 'current_opponents'])
+        index_list.extend(['current_title', 'current_matchtype'])
+        for wrestler_number in range(max_number_of_wrestlers):
+            index_list.extend(['w{wn}_current_allies'.format(wn=wrestler_number), 'w{wn}_current_opponents'.format(wn=wrestler_number)])
     
     prediction_series = pd.Series(0, index=index_list)
     
+    current_match = None        # prevents not-allocated failure, possibly change in future??
     for wrestler_number, alias in enumerate(alias_list):
         id = lookup(alias, db)
         stats_query = db.query("SELECT dob, nationality FROM wrestlers_table WHERE id = '{id}'".format(id=id)).as_dict()
@@ -64,19 +67,20 @@ ORDER BY date DESC, LIMIT {limit}"""
             matches_query = db.query(matches_query_string.format(
                 event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches+1
             )).as_dict()
-            current_match = matches_query.pop()
-            prediction_series['current_wintype'] = current_match['wintype']
-            prediction_series['current_title'] = current_match['title']
-            prediction_series['current_matchtype'] = current_match['matchtype']
+            if not current_match:
+                current_match = matches_query.pop()
+                prediction_series['current_wintype'] = current_match['wintype']
+                prediction_series['current_title'] = current_match['title']
+                prediction_series['current_matchtype'] = current_match['matchtype']
         
             current_match_competitors_list = []
             for team in current_match['competitors'].split(team_end_marker):
                 current_match_competitors_list.append(team[1,-1].strip(wrestler_start_marker).split(wrestler_end_marker))
             for team in current_match_competitors_list:
                 if id in team:
-                    prediction_series['current_allies'.format(wn=wrestler_number, mn=match_number)] = len(team)-1
+                    prediction_series['w{wn}_current_allies'.format(wn=wrestler_number)] = len(team)-1
                 else:
-                    prediction_series['current_opponents'.format(wn=wrestler_number, mn=match_number)] += len(team)
+                    prediction_series['w{wn}_current_opponents'.format(wn=wrestler_number)] += len(team)
             
         else:
             matches_query = db.query(matches_query_string.format(
