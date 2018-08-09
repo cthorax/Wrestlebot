@@ -49,7 +49,7 @@ ORDER BY date DESC, LIMIT {limit}"""
             index_list.extend("w{wn}_{temp}".format(wn=wrestler_number, temp=wrestler_template))
             for history_number in range(number_of_history_matches):
                 for history_template in history_match_index_template_list:
-                    index_list.extend("w{wn}m{mn}_{temp}".format(wm=wrestler_number, mn=match_number. temp=history_template))
+                    index_list.extend("w{wn}m{mn}_{temp}".format(wm=wrestler_number, mn=match_number, temp=history_template))
     
     if series_type in ['test', 'train']:
         index_list.extend(['current_title', 'current_matchtype'])

@@ -166,7 +166,8 @@ def full_parse(card_dict, lastdate, lastpage, force_update=False):
                     else:
                         browser.find_element_by_css_selector(event_link_template.format(link_counter)).click()
 
-                    match_dict_list = page_parse(browser=browser, date=date, card_dict=card_dict)
+                    match_dict_list, wrestler_update_list = page_parse(browser=browser, date=date, card_dict=card_dict)
+                    update_wrestler_table(wrestler_url_list=wrestler_update_list, db=db, browser=browser)
                     update_match_table(match_dict_list=match_dict_list, db=db)
         else:
             print("all records up to date.")
@@ -183,6 +184,7 @@ def page_parse(browser, date, card_dict):
 
     url = browser.current_url[36:-5]
     match_dict_list = []
+    all_wrestler_urls = set()
     for match_counter in range(2, 500):
         try:
             match_number = match_counter - 1
@@ -269,13 +271,14 @@ def page_parse(browser, date, card_dict):
             }
 
             match_dict_list.append(match_dict)
+            all_wrestler_urls.update(wrestler_urls)
 
         except selenium.common.exceptions.NoSuchElementException:
             print("event \'{}\' done.".format(url))
             break
 
     browser.back()
-    return match_dict_list
+    return match_dict_list, list(all_wrestler_urls)
 
 
 def update_match_table(match_dict_list, db):
@@ -349,69 +352,60 @@ def update_match_table(match_dict_list, db):
 
         winning_wrestler_id_list_for_team_id = []
         for winning_wrestler_url in match_dict['winners']:
-            winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url)).as_dict()
-            if not winning_wrestler_query:
-                # retry
-                winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url)).as_dict()
-                if not winning_wrestler_query:
-                    update_wrestler_table(profightdb_id=winning_wrestler_url, db=db)
-                    winning_wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(winning_wrestler_url)).as_dict()
-
-            winning_wrestler_id_list_for_team_id.append(winning_wrestler_query[0].get('id'))
+            winning_wrestler_id = int(winning_wrestler_url.split('-')[-1])
+            winning_wrestler_id_list_for_team_id.append(winning_wrestler_id)
         winning_wrestler_id_list_for_team_id.sort()
         winning_team_string = ''
         for winning_wrestler_id in winning_wrestler_id_list_for_team_id:
-            winning_team_string = winning_team_string.join([wrestler_start_marker, str(winning_wrestler_id), wrestler_end_marker])
+            winning_team_string += ''.join([wrestler_start_marker, str(winning_wrestler_id), wrestler_end_marker])
         competitor_string = ''.join([team_start_marker, winning_team_string, team_end_marker])
         for team_list in match_dict['teams']:
             team_id_list = []
             for wrestler_url in team_list:
-                wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
-                if not wrestler_query:
-                    # retry
-                    wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
-                    if not wrestler_query:
-                        update_wrestler_table(profightdb_id=wrestler_url, db=db)
-                        wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(wrestler_url)).as_dict()
-
-                wrestler_id = wrestler_query[0].get('id')
+                wrestler_id = int(wrestler_url.split('-')[-1])
                 team_id_list.append(wrestler_id)
             team_id_list.sort()
             team_string = ''
             for id in team_id_list:
                 if id in winning_wrestler_id_list_for_team_id:
                     break
-                team_string = team_string.join([wrestler_start_marker, str(id), wrestler_end_marker])
+                team_string += ''.join([wrestler_start_marker, str(id), wrestler_end_marker])
             if team_string:
-                competitor_string = ''.join([competitor_string, team_start_marker, team_string, team_end_marker])
+                competitor_string += ''.join([team_start_marker, team_string, team_end_marker])
 
         team_insert_dict['competitors'] = competitor_string
         db.query(team_insert_template.format(**team_insert_dict))
 
 
-def update_wrestler_table(profightdb_id, db):
-    insert_template = "INSERT INTO wrestler_table (profightdb_id, id, current_alias, nationality, dob) VALUES ('{profightdb_id}', {id}, '{current_alias}', '{nationality}', {dob})"
-    insert_dict = {
-        'profightdb_id': profightdb_id,
-        'id': int(profightdb_id.split('-')[-1]),
-        'current_alias': '',
-        'nationality': '',
-        'dob': -1
-    }
-    browser = webdriver.Chrome("chromedriver.exe", chrome_options=chrome_options)
-    browser.get(url='http://www.profightdb.com/wrestlers/{}.html'.format(profightdb_id))
-    insert_dict['current_alias'] = clean_text(browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(1) > td:nth-child(3)').text[16:])
-    insert_dict['nationality'] = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text[13:]
-    try:
-        date = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(2) > td:nth-child(1) > a').text
-        month, day, year = date.split()
-        date = dt.datetime.strptime("{} {} {}".format(day[:-2], month, year), "%d %b %Y")
-        insert_dict['dob'] = int(dt.datetime.strftime(date, "%Y%m%d"))
-    except selenium.common.exceptions.NoSuchElementException:
-        insert_dict['dob'] = 0
-    browser.close()
+def update_wrestler_table(wrestler_url_list, db, browser):
+    for profightdb_id in wrestler_url_list:
+        wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(profightdb_id)).as_dict()
+        if not wrestler_query:
+            # retry
+            wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(profightdb_id)).as_dict()
+            if not wrestler_query:
 
-    db.query(insert_template.format(**insert_dict))
+                insert_template = "INSERT INTO wrestler_table (profightdb_id, id, current_alias, nationality, dob) VALUES ('{profightdb_id}', {id}, '{current_alias}', '{nationality}', {dob})"
+                insert_dict = {
+                    'profightdb_id': profightdb_id,
+                    'id': int(profightdb_id.split('-')[-1]),
+                    'current_alias': '',
+                    'nationality': '',
+                    'dob': -1
+                }
+                browser.get(url='http://www.profightdb.com/wrestlers/{}.html'.format(profightdb_id))
+                insert_dict['current_alias'] = clean_text(browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(1) > td:nth-child(3)').text[16:])
+                insert_dict['nationality'] = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text[13:]
+                try:
+                    date = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(2) > td:nth-child(1) > a').text
+                    month, day, year = date.split()
+                    date = dt.datetime.strptime("{} {} {}".format(day[:-2], month, year), "%d %b %Y")
+                    insert_dict['dob'] = int(dt.datetime.strftime(date, "%Y%m%d"))
+                except selenium.common.exceptions.NoSuchElementException:
+                    insert_dict['dob'] = 0
+                browser.back()
+
+                db.query(insert_template.format(**insert_dict))
 
 
 def match_parse(match_counter, browser, type, db):
@@ -507,7 +501,7 @@ def vacuum(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), 
 
 if __name__ == '__main__':
     db = records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')
-    init = False
+    init = True
     verbose = True
 
     if init:
