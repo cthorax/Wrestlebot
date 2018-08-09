@@ -11,6 +11,15 @@ team_end_marker = 'T'
 wrestler_start_marker = 'x'
 wrestler_end_marker = 'y'
 
+
+def competitor_string_to_list(competitor_string):
+    competitor_list = []
+    for team in competitor_string.split(team_end_marker):
+        competitor_list.append(team[1,-1].strip(wrestler_start_marker).split(wrestler_end_marker))
+    
+    return competitor_list
+
+
 def clean_text(text):
     import unicodedata
     temp_string = unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode()
@@ -19,6 +28,7 @@ def clean_text(text):
     temp_string = temp_string.replace('"', "")
     temp_string = temp_string.replace('.', "")
     return temp_string
+
 
 def lookup(alias, db):
     assert isinstance(alias, str)
@@ -30,9 +40,10 @@ def lookup(alias, db):
         id = 0
         
     return id
-    
-def make_prediction_series(alias_list, db, series_type, event_date=29991231, number_of_history_matches=10, max_number_of_wrestlers=75):
-    assert series_type in ['test', 'train', 'predict']
+
+
+def make_prediction_series(id, db, series_type, event_date=29991231, number_of_history_matches=10, max_number_of_wrestlers=75):
+    assert series_type in ['test', 'train', 'predict', 'validate']
     wrestler_index_template_list = ['id', 'dob', 'nationality']
     history_match_index_template_list = ['days_since_match', 'won_match', 'wintype', 'title', 'matchtype', 'opponents', 'allies']
     index_list = []
@@ -49,9 +60,9 @@ ORDER BY date DESC, LIMIT {limit}"""
             index_list.extend("w{wn}_{temp}".format(wn=wrestler_number, temp=wrestler_template))
             for history_number in range(number_of_history_matches):
                 for history_template in history_match_index_template_list:
-                    index_list.extend("w{wn}m{mn}_{temp}".format(wm=wrestler_number, mn=match_number, temp=history_template))
+                    index_list.extend("w{wn}m{mn}_{temp}".format(wm=wrestler_number, mn=history_number, temp=history_template))
     
-    if series_type in ['test', 'train']:
+    if series_type in ['test', 'train', 'validate']:
         index_list.extend(['current_title', 'current_matchtype'])
         for wrestler_number in range(max_number_of_wrestlers):
             index_list.extend(['w{wn}_current_allies'.format(wn=wrestler_number), 'w{wn}_current_opponents'.format(wn=wrestler_number)])
@@ -59,59 +70,72 @@ ORDER BY date DESC, LIMIT {limit}"""
     prediction_series = pd.Series(0, index=index_list)
     
     current_match = None        # prevents not-allocated failure, possibly change in future??
-    for wrestler_number, alias in enumerate(alias_list):
-        id = lookup(alias, db)
-        stats_query = db.query("SELECT dob, nationality FROM wrestlers_table WHERE id = '{id}'".format(id=id)).as_dict()
+    stats_query = db.query("SELECT dob, nationality FROM wrestlers_table WHERE id = '{id}'".format(id=id)).as_dict()
         
-        if series_type in ['test', 'train']:
-            matches_query = db.query(matches_query_string.format(
-                event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches+1
-            )).as_dict()
-            if not current_match:
-                current_match = matches_query.pop()
-                prediction_series['current_wintype'] = current_match['wintype']
-                prediction_series['current_title'] = current_match['title']
-                prediction_series['current_matchtype'] = current_match['matchtype']
+    if series_type in ['test', 'train']:
+        matches_query = db.query(matches_query_string.format(
+            event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches+1
+        )).as_dict()
+        if not current_match:
+            current_match = matches_query.pop()
+            prediction_series['current_wintype'] = current_match['wintype']
+            prediction_series['current_title'] = current_match['title']
+            prediction_series['current_matchtype'] = current_match['matchtype']
         
-            current_match_competitors_list = []
-            for team in current_match['competitors'].split(team_end_marker):
-                current_match_competitors_list.append(team[1,-1].strip(wrestler_start_marker).split(wrestler_end_marker))
-            for team in current_match_competitors_list:
-                if id in team:
-                    prediction_series['w{wn}_current_allies'.format(wn=wrestler_number)] = len(team)-1
-                else:
-                    prediction_series['w{wn}_current_opponents'.format(wn=wrestler_number)] += len(team)
-            
-        else:
-            matches_query = db.query(matches_query_string.format(
-                event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches
-            )).as_dict()
-    
-        prediction_series['w{wn}_id'.format(wn=wrestler_number)] = id
-        prediction_series['w{wn}_dob'.format(wn=wrestler_number)] = stats_query.get('dob',0)
-        prediction_series['w{wn}_nationality'.format(wn=wrestler_number)] = stats_query.get('nationality',0)
-        for match_number, match in enumerate(matches_query):
-
-        prediction_series['w{wn}m{mn}_days_since_match'.format(wn=wrestler_number, mn=match_number)] = event_date - match['date']
-        prediction_series['w{wn}m{mn}_wintype'.format(wn=wrestler_number, mn=match_number)] = match['wintype']
-        prediction_series['w{wn}m{mn}_title'.format(wn=wrestler_number, mn=match_number)] = match['title']
-        prediction_series['w{wn}m{mn}_matchtype'.format(wn=wrestler_number, mn=match_number)] = match['matchtype']
-        
-        competitors_list = []
-        for team in match['competitors'].split(team_end_marker):
-            competitors_list.append(team[1,-1].strip(wrestler_start_marker).split(wrestler_end_marker))
-        for team in competitors_list:
+        current_match_competitors_list = competitor_string_to_list(current_match['competitors'])
+        for team in current_match_competitors_list:
             if id in team:
-                prediction_series['w{wn}m{mn}_allies'.format(wn=wrestler_number, mn=match_number)] = len(team)-1
+                prediction_series['w{wn}_current_allies'.format(wn=wrestler_number)] = len(team)-1
             else:
-                prediction_series['w{wn}m{mn}_opponents'.format(wn=wrestler_number, mn=match_number)] += len(team)
+                prediction_series['w{wn}_current_opponents'.format(wn=wrestler_number)] += len(team)
             
-        if id in competitors_list[0]:
-            prediction_series['w{wn}m{mn}_won_match'.format(wn=wrestler_number, mn=match_number)] = 1
+    else:
+        matches_query = db.query(matches_query_string.format(
+            event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches
+        )).as_dict()
+    
+    prediction_series['w{wn}_id'.format(wn=wrestler_number)] = id
+    prediction_series['w{wn}_dob'.format(wn=wrestler_number)] = stats_query.get('dob',0)
+    prediction_series['w{wn}_nationality'.format(wn=wrestler_number)] = stats_query.get('nationality',0)
+    for match_number, match in enumerate(matches_query):
+
+    prediction_series['w{wn}m{mn}_days_since_match'.format(wn=wrestler_number, mn=match_number)] = event_date - match['date']
+    prediction_series['w{wn}m{mn}_wintype'.format(wn=wrestler_number, mn=match_number)] = match['wintype']
+    prediction_series['w{wn}m{mn}_title'.format(wn=wrestler_number, mn=match_number)] = match['title']
+    prediction_series['w{wn}m{mn}_matchtype'.format(wn=wrestler_number, mn=match_number)] = match['matchtype']
+        
+    competitors_list = competitor_string_to_list(match['competitors'])
+    for team in competitors_list:
+        if id in team:
+            prediction_series['w{wn}m{mn}_allies'.format(wn=wrestler_number, mn=match_number)] = len(team)-1
         else:
-            prediction_series['w{wn}m{mn}_won_match'.format(wn=wrestler_number, mn=match_number)] = 0
+            prediction_series['w{wn}m{mn}_opponents'.format(wn=wrestler_number, mn=match_number)] += len(team)
+            
+    if id in competitors_list[0]:
+        prediction_series['w{wn}m{mn}_won_match'.format(wn=wrestler_number, mn=match_number)] = 1
+    else:
+        prediction_series['w{wn}m{mn}_won_match'.format(wn=wrestler_number, mn=match_number)] = 0
         
     return prediction_series
+
+
+def make_dataset_dict(db, number_of_matches=1000, ):
+    dataset_dict = {'test': None, 'train': None, 'validate': None}
+    for key in dataset_dict.keys():
+        temp_dataset = None
+        match_query = db.query("SELECT * FROM match_table WHERE id IN (SELECT id FROM match_table ORDER BY RANDOM() LIMIT {limit})".format(limit=number_of_matches)).as_dict()
+        for match in match_query:
+            teams_list = competitor_string_to_list(match['competitors'])
+            for id in teams_list:
+                temp_series = make_prediction_series(id=id, db=db, series_type=key, event_date=match['date']+1)
+                if temp_dataset:
+                    temp_dataset.append(temp_series)
+                else:
+                    temp_dataset = pd.DataFrame(temp_series)
+        dataset_dict[key] = temp_dataset
+        
+    return dataset_dict
     
+
 if __name__ == '__main__':
     pass
