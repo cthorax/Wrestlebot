@@ -119,7 +119,7 @@ ORDER BY date DESC, LIMIT {limit}"""
     return prediction_series
 
 
-def make_dataset_dict(db, number_of_matches=1000, ):
+def make_dataset_dict(db, number_of_matches=1000):
     dataset_dict = {'test': None, 'train': None, 'validate': None}
     for key in dataset_dict.keys():
         temp_dataset = None
@@ -138,4 +138,6 @@ def make_dataset_dict(db, number_of_matches=1000, ):
     
 
 if __name__ == '__main__':
+    db = records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')
+    dataset_dict = make_dataset_dict(db=db)
     pass

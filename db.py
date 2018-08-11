@@ -128,12 +128,11 @@ def init_virtual_table(table_dict, db):
     db.query(create_query)
 
 
-def full_parse(card_dict, lastdate, lastpage, force_update=False):
+def full_parse(card_dict, lastdate, lastpage, browser, force_update=False):
     index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{}-no-{}.html?order=&type='  # goes from 1 to whatever
     event_link_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(3) > a"
     index_date_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(1) > a"
 
-    browser = webdriver.Chrome("chromedriver.exe", chrome_options=chrome_options)
     try:
         browser.get(index_url_template.format(1, card_dict['number']))
         date = browser.find_element_by_css_selector(index_date_template.format(2)).text
@@ -171,8 +170,6 @@ def full_parse(card_dict, lastdate, lastpage, force_update=False):
                     update_match_table(match_dict_list=match_dict_list, db=db)
         else:
             print("all records up to date.")
-
-        browser.close()
 
     except selenium.common.exceptions.WebDriverException:
         print("selenium window crashed")
@@ -472,17 +469,15 @@ def last_date(card, db):
     return lastdate
 
 
-def last_page(card):
+def last_page(card, browser):
     index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{}-no-{}.html?order=&type='
     last_page_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > div"
 
-    browser = webdriver.Chrome("chromedriver.exe", chrome_options=chrome_options)
     browser.get(index_url_template.format(1, card))
     lastpage = browser.find_element_by_css_selector(last_page_template)
     lastpage = lastpage.get_attribute('innerHTML')
     lastpage = int(int(lastpage.split("showing 1-10 of ")[1][:-1])/10)+1
     lastpage = min(lastpage, 200)
-    browser.close()
     return lastpage
 
 
@@ -501,7 +496,7 @@ def vacuum(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), 
 
 if __name__ == '__main__':
     db = records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')
-    init = True
+    init = False
     verbose = True
 
     if init:
@@ -675,10 +670,14 @@ if __name__ == '__main__':
             init_table(table_dict=virtual_table_dict, db=db)
     vacuum(db=db, verbose=verbose)
 
-    matches = []
+    browser = webdriver.Chrome("chromedriver.exe", chrome_options=chrome_options)
+
     for card_dict in [{'name': 'wwe', 'number': 2}, {'name': 'nxt', 'number': 103}]:
         lastdate = last_date(card_dict['name'], db=db)
-        lastpage = last_page(card_dict['number'])
+        lastpage = last_page(card_dict['number'], browser=browser)
         print("beginning {} scrape. last page is {}, last date was {}".format(card_dict['name'], lastpage, lastdate))
-        full_parse(card_dict, lastdate=lastdate, lastpage=lastpage, force_update=False)
+        full_parse(card_dict, lastdate=lastdate, lastpage=lastpage, browser=browser, force_update=False)
         vacuum(db=db, verbose=verbose)
+
+    browser.close()
+    print("finished!")
