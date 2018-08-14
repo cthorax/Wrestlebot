@@ -392,7 +392,9 @@ def update_wrestler_table(wrestler_url_list, db, browser):
                 }
                 browser.get(url='http://www.profightdb.com/wrestlers/{}.html'.format(profightdb_id))
                 insert_dict['current_alias'] = clean_text(browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(1) > td:nth-child(3)').text[16:])
-                insert_dict['nationality'] = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text[13:]
+                nationality = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text[13:]
+
+                insert_dict['nationality'] = update_nationality_table(nationality=nationality, db=db)
                 try:
                     date = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(2) > td:nth-child(1) > a').text
                     month, day, year = date.split()
@@ -448,6 +450,18 @@ def update_alias_table(alias_and_url_dict, db):
             continue
         else:
             db.query("INSERT INTO alias_table (alias, id) VALUES ('{alias}', {id})".format(alias=alias, id=id))
+
+
+def update_nationality_table(nationality, db):
+    dupecheck = db.query("SELECT id FROM nationality_table WHERE nationality = '{nationality}'".format(nationality=nationality)).as_dict()
+    if dupecheck:
+        nationality_id = dupecheck[0]['id']
+    else:
+        db.query("INSERT INTO nationality_table (nationality) VALUES ('{nationality}')".format(nationality=nationality))
+        nationality_query = db.query("SELECT id FROM nationality_table WHERE nationality = '{nationality}'".format(nationality=nationality)).as_dict()
+        nationality_id = nationality_query[0]['id']
+
+    return nationality_id
 
 
 def clean_text(text):
@@ -644,7 +658,24 @@ if __name__ == '__main__':
                         'key_type': 'INTEGER',
                     },
                 ]
+            },
+            {
+                'table_name': 'nationality_table',
+                'table_params': [
+                    {
+                        'key_name': 'nationality',
+                        'key_type': 'TEXT',
+                        'unique_flag': True,
+                        'not_null_flag': True
+                    },
+                    {
+                        'key_name': 'id',
+                        'key_type': 'INTEGER',
+                        'primary_key_flag': True
+                    },
+                ]
             }
+
         ]
 
         for table_dict in table_dict_list:
