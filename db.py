@@ -1,11 +1,22 @@
+
+import datetime as dt
+import configparser
+
 import records
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 import selenium.common.exceptions
 
-import datetime as dt
+config = configparser.ConfigParser()
+config.read('config.ini')
 
-path_to_chromedriver = 'D:\Python\chromedriver.exe'
+team_start_marker = config['all files']['team_start_marker']
+team_end_marker = config['all files']['team_end_marker']
+wrestler_start_marker = config['all files']['wrestler_start_marker']
+wrestler_end_marker = config['all files']['wrestler_end_marker']
+db_url = config['all files']['db_url']
+path_to_chromedriver = config['db only']['path_to_chromedriver']
+
 chrome_options = Options()
 chrome_options.add_experimental_option('prefs', {'profile.managed_default_content_settings.cookies': 2,
                                                  'profile.managed_default_content_settings.images': 2,
@@ -15,12 +26,6 @@ chrome_options.add_experimental_option('prefs', {'profile.managed_default_conten
                                                  'profile.managed_default_content_settings.geolocation': 2,
                                                  'profile.managed_default_content_settings.notifications': 2,
                                                  'profile.managed_default_content_settings.media_stream': 2})
-
-
-team_start_marker = ''
-team_end_marker = 'T'
-wrestler_start_marker = 'x'
-wrestler_end_marker = 'y'
 
 def init_table(table_dict, db):
     """
@@ -495,7 +500,7 @@ def last_page(card, browser):
     return lastpage
 
 
-def vacuum(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), verbose=False):
+def vacuum(db=records.Database(db_url=db_url), verbose=False):
     if verbose:
         from os.path import getsize
         before = getsize(db.db_url[10:])
@@ -509,7 +514,7 @@ def vacuum(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), 
 
 
 if __name__ == '__main__':
-    db = records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')
+    db = records.Database(db_url=db_url)
     init = False
     verbose = True
 
