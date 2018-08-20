@@ -1,13 +1,17 @@
 
+import configparser
 import records
 import tensorflow as tf
 import pandas as pd
 
-team_start_marker = ''
-team_end_marker = 'T'
-wrestler_start_marker = 'x'
-wrestler_end_marker = 'y'
+config = configparser.ConfigParser()
+config.read('config.ini')
 
+team_start_marker = config['all files']['team_start_marker']
+team_end_marker = config['all files']['team_end_marker']
+wrestler_start_marker = config['all files']['wrestler_start_marker']
+wrestler_end_marker = config['all files']['wrestler_end_marker']
+db_url = config['all files']['db_url']
 
 def competitor_string_to_list(competitor_string):
     competitor_list = []
@@ -42,7 +46,7 @@ def clean_text(text):
     return temp_string
 
 
-def lookup(alias, db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')):
+def lookup(alias, db=records.Database(db_url=db_url)):
     assert isinstance(alias, str)
     cleaned_alias = clean_text(alias)
     id_dict = db.query("SELECT id FROM alias_table WHERE alias = '{alias}';".format(alias=cleaned_alias), fetchall=True).as_dict()
@@ -73,7 +77,7 @@ def prediction_series_dict(number_of_history_matches, max_number_of_wrestlers):
     return index_dict
 
 
-def make_prediction_series(id, series_type, index_dict, db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), event_date=29991231, number_of_history_matches=10, max_number_of_wrestlers=75):
+def make_prediction_series(id, series_type, index_dict, db=records.Database(db_url=db_url), event_date=29991231, number_of_history_matches=10, max_number_of_wrestlers=75):
     assert series_type in ['test', 'train', 'predict', 'validate']
     matches_query_string = """
     SELECT m.date, m.wintype, m.titles, m.matchtype, t.competitors
@@ -140,7 +144,7 @@ def make_prediction_series(id, series_type, index_dict, db=records.Database(db_u
     return index_dict
 
 
-def make_dataset_dict(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db'), number_of_matches=1000, number_of_history_matches=10, max_number_of_wrestlers=75):
+def make_dataset_dict(db=records.Database(db_url=db_url), number_of_matches=1000, number_of_history_matches=10, max_number_of_wrestlers=75):
     dataset_dict = {'test': None, 'train': None, 'validate': None}
     blank_dict = prediction_series_dict(number_of_history_matches=number_of_history_matches, max_number_of_wrestlers=max_number_of_wrestlers)
 
@@ -160,6 +164,6 @@ def make_dataset_dict(db=records.Database(db_url='sqlite:///G:/wrestlebot/wrestl
     
 
 if __name__ == '__main__':
-    db = records.Database(db_url='sqlite:///G:/wrestlebot/wrestlebot.db')
+    db = records.Database(db_url=db_url)
     dataset_dict = make_dataset_dict()
     pass
