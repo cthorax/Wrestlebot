@@ -14,7 +14,9 @@ wrestler_end_marker = config['all files']['wrestler_end_marker']
 number_of_history_matches = int(config['all files']['number_of_history_matches'])
 max_number_of_wrestlers = int(config['all files']['max_number_of_wrestlers'])
 db_url = config['all files']['db_url']
-path_to_tf_files = config['predict only]['path_to_tf_files']
+path_to_tf_files = config['predict only']['path_to_tf_files']
+verbose = config['all files'].getboolean('verbose')
+
 
 def competitor_string_to_list(competitor_string):
     competitor_list = []
@@ -183,14 +185,15 @@ class Model(object):
         (self.train_x, self.train_y), (self.test_x, self.test_y), (self.validate_x, self.validate_y) = self.load_data()
 
         # train model
-        self.train_model(verbose=verbose)
+        self.train_model()
 
         # evaluate model
-        self.assess_model(verbose=verbose)
+        self.assess_model()
 
     def load_data(self, y_name="winner"):     # when no longer testing, change limit probably
         # right now this only works for numeric values
-        train_x = self.train_dataset.astype(int)
+        train_x = self.train_dataset
+        train_x = train_x.astype(int)
         train_y = self.train_dataset.get(y_name).astype(int)
 
         test_x = self.test_dataset.astype(int)
@@ -202,7 +205,7 @@ class Model(object):
         return (train_x, train_y), (test_x, test_y), (validate_x, validate_y)
 
     def train_input_fn(self, features, labels):
-        #stolen from the iris_data tutorial
+        # stolen from the iris_data tutorial
         """An input function for training"""
         # Convert the inputs to a Dataset.
         dataset = tf.data.Dataset.from_tensor_slices((dict(features), labels))
@@ -214,7 +217,7 @@ class Model(object):
         return dataset
 
     def eval_input_fn(self, features, labels):
-        #stolen from the iris_data tutorial
+        # stolen from the iris_data tutorial
         """An input function for evaluation or prediction"""
         features = dict(features)
         if labels is None:
