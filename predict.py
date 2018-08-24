@@ -3,6 +3,7 @@ import configparser
 import records
 import tensorflow as tf
 import pandas as pd
+import numpy as np
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -128,8 +129,8 @@ def make_prediction_series(id, series_type, index_dict, db=records.Database(db_u
                 index_dict['w{wn}m{mn}_id'.format(wn=wrestler_number, mn=match_number)] = competitor_dict[wrestler_number]
                 stats_query = db.query("SELECT dob, nationality FROM wrestler_table WHERE id = '{id}'".format(id=competitor_dict[wrestler_number])).as_dict()
                 for stats in stats_query:
-                    index_dict['w{wn}m{mn}_dob'.format(wn=wrestler_number, mn=match_number)] = stats.get('dob', 0)
-                    index_dict['w{wn}m{mn}_nationality'.format(wn=wrestler_number, mn=match_number)] = stats.get('nationality', 0)
+                    index_dict['w{wn}m{mn}_dob'.format(wn=wrestler_number, mn=match_number)] = int(stats.get('dob', 0))
+                    index_dict['w{wn}m{mn}_nationality'.format(wn=wrestler_number, mn=match_number)] = int(stats.get('nationality', 0))
                     index_dict['w{wn}m{mn}_days_since_match'.format(wn=wrestler_number, mn=match_number)] = event_date - match['date']
                     index_dict['w{wn}m{mn}_wintype'.format(wn=wrestler_number, mn=match_number)] = match['wintype']
                     index_dict['w{wn}m{mn}_title'.format(wn=wrestler_number, mn=match_number)] = match['titles']
@@ -143,7 +144,8 @@ def make_prediction_series(id, series_type, index_dict, db=records.Database(db_u
 
                 if id in competitor_list[0] and index_dict['winner'] == -1:
                     index_dict['winner'] = wrestler_number
-        
+
+    is_this_fucked_up = pd.DataFrame.from_dict([index_dict], dtype='int')
     return index_dict
 
 
@@ -160,7 +162,16 @@ def make_dataset_dict(db=records.Database(db_url=db_url), number_of_matches=1000
                 for id in team:
                     temp_dict = make_prediction_series(id=id, series_type=key, index_dict=blank_dict.copy(), db=db, event_date=match['date'] + 1)
                     dict_list.append(temp_dict)
-        temp_dataset = pd.DataFrame.from_dict(dict_list)
+        temp_dataset = pd.DataFrame.from_dict(dict_list, dtype='int')
+        # the following is a test until i figure out this shit
+        nan_dict = {}
+        for colname, thingy in temp_dataset.iteritems():
+            if thingy.dtype.name not in ['int', 'int8', 'int16', 'int32', 'int64', 'int128']:
+                 wrong_dtype = thingy.dtype
+                 thingy.fillna(nan_dict.get(colname, 0))
+                 pass
+
+
         dataset_dict[key] = temp_dataset
         
     return dataset_dict
