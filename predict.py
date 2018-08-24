@@ -83,10 +83,9 @@ def prediction_series_dict():
     return index_dict
 
 
-def make_prediction_series(id, series_type, index_dict, db=records.Database(db_url=db_url), event_date=29991231):
-    assert series_type in ['test', 'train', 'predict', 'validate']
+def make_prediction_match_dict(id, index_dict, db=records.Database(db_url=db_url), event_date=29991231):
     matches_query_string = """
-    SELECT m.date, m.wintype, m.titles, m.matchtype, t.competitors
+    SELECT m.rowid, m.date, m.wintype, m.titles, m.matchtype, t.competitors
     FROM match_table m JOIN team_table t ON m.match_id = t.match_id
     WHERE date < {event} AND m.match_id IN (
         SELECT match_id FROM team_table WHERE competitors LIKE '%{start}{id}{end}%'
@@ -94,30 +93,25 @@ def make_prediction_series(id, series_type, index_dict, db=records.Database(db_u
     ORDER BY date DESC
     LIMIT {limit}"""
 
-    if series_type in ['test', 'train', 'validate']:
-        matches_query = db.query(matches_query_string.format(
-            event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches+1
-        )).as_dict()
-        current_match = matches_query.pop()
-        index_dict['current_wintype'] = current_match['wintype']
-        index_dict['current_titles'] = current_match['titles']
-        index_dict['current_matchtype'] = current_match['matchtype']
+    matches_query = db.query(matches_query_string.format(
+        event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches+1
+    )).as_dict()
+    current_match = matches_query.pop()
+    match_rowid = current_match['rowid']
+    index_dict['current_wintype'] = current_match['wintype']
+    index_dict['current_titles'] = current_match['titles']
+    index_dict['current_matchtype'] = current_match['matchtype']
 
-        current_match_competitors_list = competitor_string_to_list(current_match['competitors'])
-        current_match_competitor_dict = competitor_list_to_dict(current_match_competitors_list)
-        for wrestler_number in range(max_number_of_wrestlers):
-            if current_match_competitor_dict[wrestler_number] == 0:
-                break
-            for team in current_match_competitors_list:
-                if current_match_competitor_dict[wrestler_number] in team:
-                    index_dict['w{wn}_current_allies'.format(wn=wrestler_number)] = len(team) - 1
-                else:
-                    index_dict['w{wn}_current_opponents'.format(wn=wrestler_number)] += len(team)
-
-    else:
-        matches_query = db.query(matches_query_string.format(
-            event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches
-        )).as_dict()
+    current_match_competitors_list = competitor_string_to_list(current_match['competitors'])
+    current_match_competitor_dict = competitor_list_to_dict(current_match_competitors_list)
+    for wrestler_number in range(max_number_of_wrestlers):
+        if current_match_competitor_dict[wrestler_number] == 0:
+            break
+        for team in current_match_competitors_list:
+            if current_match_competitor_dict[wrestler_number] in team:
+                index_dict['w{wn}_current_allies'.format(wn=wrestler_number)] = len(team) - 1
+            else:
+                index_dict['w{wn}_current_opponents'.format(wn=wrestler_number)] += len(team)
 
     for match_number, match in enumerate(matches_query):
         competitor_list = competitor_string_to_list(match['competitors'])
@@ -145,8 +139,7 @@ def make_prediction_series(id, series_type, index_dict, db=records.Database(db_u
                 if id in competitor_list[0] and index_dict['winner'] == -1:
                     index_dict['winner'] = wrestler_number
 
-    is_this_fucked_up = pd.DataFrame.from_dict([index_dict], dtype='int')
-    return index_dict
+    return match_rowid, index_dict
 
 
 def make_dataset_dict(db=records.Database(db_url=db_url), number_of_matches=1000):
@@ -155,17 +148,23 @@ def make_dataset_dict(db=records.Database(db_url=db_url), number_of_matches=1000
 
     for key in dataset_dict.keys():
         match_query = db.query("SELECT m.date AS date, t.competitors AS competitors FROM match_table m JOIN team_table t ON t.match_id = m.match_id WHERE id IN (SELECT id FROM match_table ORDER BY RANDOM() LIMIT {limit})".format(limit=number_of_matches)).as_dict()
-        dict_list = []
+        dict_of_match_dicts = {}
+        list_of_dataframes = []
         for match in match_query:
             teams_list = competitor_string_to_list(match['competitors'])
             for team in teams_list:
                 for id in team:
-                    temp_dict = make_prediction_series(id=id, series_type=key, index_dict=blank_dict.copy(), db=db, event_date=match['date'] + 1)
-                    dict_list.append(temp_dict)
-        temp_dataset = pd.DataFrame.from_dict(dict_list, dtype='int')
+                    temp_rowid, temp_dict = make_prediction_series(id=id, index_dict=blank_dict.copy(), db=db, event_date=match['date'] + 1)
+                    dict_of_match_dicts[temp_rowid] = temp_dict
+
+        for match_rowid, match_dict in dict_of_match_dicts.items:
+            temp_dataset = pd.DataFrame(match_dict, dtype='int', index=match_rowid)
+            list_of_dataframes.append(temp_dataset)
+
+        combined_dataset = pd.DataFrame.join(list_of_dataframes, how='outer')
         # the following is a test until i figure out this shit
         nan_dict = {}
-        for colname, thingy in temp_dataset.iteritems():
+        for colname, thingy in combined_dataset.iteritems():
             if thingy.dtype.name not in ['int', 'int8', 'int16', 'int32', 'int64', 'int128']:
                  wrong_dtype = thingy.dtype
                  thingy.fillna(nan_dict.get(colname, 0))
