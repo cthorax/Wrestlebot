@@ -3,7 +3,7 @@ import configparser
 import records
 import tensorflow as tf
 import pandas as pd
-import numpy as np
+
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -14,9 +14,11 @@ wrestler_start_marker = config['all files']['wrestler_start_marker']
 wrestler_end_marker = config['all files']['wrestler_end_marker']
 number_of_history_matches = int(config['all files']['number_of_history_matches'])
 max_number_of_wrestlers = int(config['all files']['max_number_of_wrestlers'])
-db_url = config['all files']['db_url']
 path_to_tf_files = config['predict only']['path_to_tf_files']
 verbose = config['all files'].getboolean('verbose')
+
+db_url = config['all files']['db_url']
+db = records.Database(db_url=db_url)
 
 
 def competitor_string_to_list(competitor_string):
@@ -66,7 +68,7 @@ def lookup(alias, db=records.Database(db_url=db_url)):
 
 def prediction_series_dict():
     wrestler_index_template_list = ['id', 'dob', 'nationality']
-    history_match_index_template_list = ['days_since_match', 'wintype', 'title', 'matchtype', 'opponents', 'allies']
+    history_match_index_template_list = ['days_since_match', 'wintype', 'title', 'matchtype', 'opponents', 'allies', 'location', 'attendance', 'promotion', 'ppv']
     index_dict = {'current_title': 0, 'current_matchtype': 0, 'winner': -1}
 
     for wrestler_number in range(max_number_of_wrestlers):
@@ -85,19 +87,19 @@ def prediction_series_dict():
 
 def make_prediction_match_dict(id, index_dict, db=records.Database(db_url=db_url), event_date=29991231):
     matches_query_string = """
-    SELECT m.rowid, m.date, m.wintype, m.titles, m.matchtype, t.competitors
-    FROM match_table m JOIN team_table t ON m.match_id = t.match_id
-    WHERE date < {event} AND m.match_id IN (
-        SELECT match_id FROM team_table WHERE competitors LIKE '%{start}{id}{end}%'
-    )
-    ORDER BY date DESC
-    LIMIT {limit}"""
+SELECT m.id, m.date, m.wintype, m.titles, m.matchtype, t.competitors
+FROM match_table m JOIN team_table t ON m.match_id = t.match_id
+WHERE date < {event} AND m.match_id IN (
+    SELECT match_id FROM team_table WHERE competitors LIKE '%{start}{id}{end}%'
+)
+ORDER BY date DESC
+LIMIT {limit}"""
 
     matches_query = db.query(matches_query_string.format(
         event=event_date, start=wrestler_start_marker, id=id, end=wrestler_end_marker, limit=number_of_history_matches+1
     )).as_dict()
     current_match = matches_query.pop()
-    match_rowid = current_match['rowid']
+    match_rowid = current_match['id']
     index_dict['current_wintype'] = current_match['wintype']
     index_dict['current_titles'] = current_match['titles']
     index_dict['current_matchtype'] = current_match['matchtype']
@@ -147,37 +149,56 @@ def make_dataset_dict(db=records.Database(db_url=db_url), number_of_matches=1000
     blank_dict = prediction_series_dict()
 
     for key in dataset_dict.keys():
-        match_query = db.query("SELECT m.date AS date, t.competitors AS competitors FROM match_table m JOIN team_table t ON t.match_id = m.match_id WHERE id IN (SELECT id FROM match_table ORDER BY RANDOM() LIMIT {limit})".format(limit=number_of_matches)).as_dict()
+        if verbose:
+            print("making '{key}' dataset from {matches} matches.".format(key=key, matches=number_of_matches))
+        match_query = db.query("""
+SELECT m.date AS date, t.competitors AS competitors
+FROM match_table m JOIN team_table t ON t.match_id = m.match_id
+WHERE id IN (
+SELECT id FROM match_table ORDER BY RANDOM() LIMIT {limit}
+)""".format(limit=number_of_matches)).as_dict()
+
         dict_of_match_dicts = {}
-        list_of_dataframes = []
-        for match in match_query:
+        for matchnum, match in enumerate(match_query, start=1):
+            if verbose:
+                print("\rprocessing match {num} of {maxnum}".format(num=matchnum, maxnum=number_of_matches), end='')
             teams_list = competitor_string_to_list(match['competitors'])
             for team in teams_list:
                 for id in team:
-                    temp_rowid, temp_dict = make_prediction_series(id=id, index_dict=blank_dict.copy(), db=db, event_date=match['date'] + 1)
+                    temp_rowid, temp_dict = make_prediction_match_dict(id=id, index_dict=blank_dict.copy(), db=db, event_date=match['date'] + 1)
                     dict_of_match_dicts[temp_rowid] = temp_dict
 
-        for match_rowid, match_dict in dict_of_match_dicts.items:
-            temp_dataset = pd.DataFrame(match_dict, dtype='int', index=match_rowid)
-            list_of_dataframes.append(temp_dataset)
+        if verbose:
+            print('... done!\ncombining datasets.')
+        combined_dataset = pd.DataFrame(list(dict_of_match_dicts.values()), dtype='int', index=pd.Index(list(dict_of_match_dicts.keys())))
+        combined_dataset.fillna(0, inplace=True)
 
-        combined_dataset = pd.DataFrame.join(list_of_dataframes, how='outer')
-        # the following is a test until i figure out this shit
-        nan_dict = {}
-        for colname, thingy in combined_dataset.iteritems():
-            if thingy.dtype.name not in ['int', 'int8', 'int16', 'int32', 'int64', 'int128']:
-                 wrong_dtype = thingy.dtype
-                 thingy.fillna(nan_dict.get(colname, 0))
-                 pass
-
-
-        dataset_dict[key] = temp_dataset
+        dataset_dict[key] = combined_dataset
         
     return dataset_dict
 
     
 class Model(object):
     def __init__(self, batch_size=100, train_steps=1000, model_type='linear', dataset_dict=None, layer_specs=[10, 10, 10], name=None):
+        """
+        Called when Model is instantiated.
+        :param batch_size: integer. pd.Dataframes used in training model are chopped up to contain this many rows.
+        :param train_steps: integer. training process repeated this many times.
+        :param model_type: string. linear, deep, or hybrid.
+                                A linear model is essentially a linear regression.
+                                A deep model is a fully connected NN, following layer specs.
+                                A hybrid model has both a linear portion and a deep portion.
+        :param dataset_dict: dict. in one of two forms; either a dict with training dataframes for keys 'train', 'test', and 'assess',
+                                or a dict with only the key 'matches' and an int value to override the default number_of_matches peram
+                                when make_dataset_dict is called. 
+        :param layer_specs: list. each entry is the number of nodes in a layer, the number of elements in the list is the number of layers.
+                                this param is ignored if model_type is 'linear'
+        :param name: string. an optional name for the model for use when multiple models are served at once.
+        """
+        if verbose:
+            print("initialising {type} model '{name}' with batch size {batch}, train steps {train}, and layer specs {layers}".format(
+                type=model_type, name=name, train=train_steps, batch=batch_size, layers=layer_specs
+            ))
         self.batch_size = batch_size
         self.train_steps = train_steps
         self.model_type = model_type
@@ -187,6 +208,8 @@ class Model(object):
         
         if dataset_dict is None:
             dataset_dict = make_dataset_dict()
+        elif list(dataset_dict.keys()) == ['matches']:
+            dataset_dict = make_dataset_dict(number_of_matches=dataset_dict['matches'])
         self.test_dataset = dataset_dict['test']
         self.train_dataset = dataset_dict['train']
         self.validate_dataset = dataset_dict['validate']
@@ -200,7 +223,7 @@ class Model(object):
         # evaluate model
         self.assess_model()
 
-    def load_data(self, y_name="winner"):     # when no longer testing, change limit probably
+    def load_data(self, y_name="winner"):
         # right now this only works for numeric values
         train_x = self.train_dataset
         train_x = train_x.astype(int)
@@ -248,6 +271,8 @@ class Model(object):
 
     def train_model(self, verbose=False):
         # calls input_to_model to train a new model
+        if verbose:
+            print("training model for {train} steps".format(train=self.train_steps))
 
         # define feature columns
         numeric_feature_columns = []
@@ -256,8 +281,8 @@ class Model(object):
 
         index_dict_keys = list(prediction_series_dict().keys())
         
-        numeric_markers = ['dob', 'days_since_match', 'opponents', 'allies']
-        categorical_markers = ['id', 'nationality', 'wintype', 'title', 'matchtype', 'winner']
+        numeric_markers = ['dob', 'days_since_match', 'opponents', 'allies', 'attendance']
+        categorical_markers = ['id', 'nationality', 'wintype', 'title', 'matchtype', 'winner', 'promotion','location', 'ppv']
         
         for key in index_dict_keys:
             for marker in numeric_markers + categorical_markers:
@@ -301,8 +326,6 @@ class Model(object):
             )
 
         # Train the Model.
-        if verbose:
-            print('training the {} classifier \'{}\' for {} steps.'.format(self.model_type, self.name, self.train_steps))
         classifier.train(
             input_fn=lambda: self.train_input_fn(
                 self.train_x,
@@ -349,8 +372,12 @@ class Model(object):
         ))
 
         return eval_result['accuracy']
-    
-if __name__ == '__main__':
-    db = records.Database(db_url=db_url)
-    model = Model()
+
+
+def test():
+    model = Model(dataset_dict={'matches': 10})
     pass
+
+
+if __name__ == '__main__':
+    test()
