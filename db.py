@@ -15,7 +15,10 @@ team_end_marker = config['all files']['team_end_marker']
 wrestler_start_marker = config['all files']['wrestler_start_marker']
 wrestler_end_marker = config['all files']['wrestler_end_marker']
 db_url = config['all files']['db_url']
+verbose = config['all files'].getboolean('verbose')
+
 path_to_chromedriver = config['db only']['path_to_chromedriver']
+db = records.Database(db_url=db_url)
 
 chrome_options = Options()
 chrome_options.add_experimental_option('prefs', {'profile.managed_default_content_settings.cookies': 2,
@@ -27,7 +30,7 @@ chrome_options.add_experimental_option('prefs', {'profile.managed_default_conten
                                                  'profile.managed_default_content_settings.notifications': 2,
                                                  'profile.managed_default_content_settings.media_stream': 2})
 
-def init_table(table_dict, db):
+def init_table(table_dict):
     """
     drops and creates a table based on a passed dict into the specified db
 
@@ -93,70 +96,24 @@ def init_table(table_dict, db):
     db.query(create_query)
 
 
-def init_virtual_table(table_dict, db):
-    """
-    drops and creates a table based on a passed dict into the specified db
-
-    :param table_dict:
-    dict format below. at least one table_param entry required, no foreign_keys required
-    {
-        'table_name': string,
-        'table_params': [
-            {
-                'key_name': string required
-            }
-        ]
-     }
-
-    :param db:
-    active records db instance
-
-    :return:
-    none
-    """
-
-    drop_template = 'DROP TABLE IF EXISTS {table_name};'
-    create_template = 'CREATE VIRTUAL TABLE {table_name} USING FTS5 (\n{table_params}\n);'
-
-    drop_query = drop_template.format(**table_dict)
-    db.query(drop_query)
-
-    param_queries = ''
-    for param in table_dict['table_params']:
-
-        param_query = '{key_name}, '.format(key_name=param.get('key_name'))
-        param_queries += param_query
-
-    param_queries = param_queries[:-2]  # strips trailing ', '
-
-    create_query = create_template.format(table_name=table_dict.get('table_name'), table_params=param_queries)
-    db.query(create_query)
-
-
-def full_parse(card_dict, lastdate, lastpage, browser, force_update=False):
+def full_parse(card_dict, lastdate, lastpage, browser):
     index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{}-no-{}.html?order=&type='  # goes from 1 to whatever
     event_link_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(3) > a"
     index_date_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(1) > a"
 
     try:
-        browser.get(index_url_template.format(1, card_dict['number']))
+        browser.get(index_url_template.format(1, card_dict['id']))
         date = browser.find_element_by_css_selector(index_date_template.format(2)).text
         month, day, year = date.split()
         date = dt.datetime.strptime("{} {} {}".format(day[:-2], month, year), "%d %b %Y")
         date = int(dt.datetime.strftime(date, "%Y%m%d"))
-        if date > lastdate or force_update:
-            if force_update:
-                page_range = range(1, lastpage)
-            else:
-                page_range = range(1, lastpage).__reversed__()
+        if date > lastdate:
+            page_range = range(1, lastpage).__reversed__()
 
             for index_counter in page_range:
-                if force_update:
-                    link_range = range(2, 12)
-                else:
-                    link_range = range(2, 12).__reversed__()
+                link_range = range(2, 12).__reversed__()
 
-                browser.get(index_url_template.format(index_counter, card_dict['number']))
+                browser.get(index_url_template.format(index_counter, card_dict['id']))
                 print("\npage {} beginning.\n".format(index_counter))
 
                 for link_counter in link_range:
@@ -164,15 +121,15 @@ def full_parse(card_dict, lastdate, lastpage, browser, force_update=False):
                     month, day, year = date.split()
                     date = dt.datetime.strptime("{} {} {}".format(day[:-2], month, year), "%d %b %Y")
                     date = int(dt.datetime.strftime(date, "%Y%m%d"))
-                    if date <= lastdate and not force_update:
+                    if date <= lastdate:
                         print("date {} is less than {}, skipping.".format(date,lastdate))
                         continue
                     else:
                         browser.find_element_by_css_selector(event_link_template.format(link_counter)).click()
 
                     match_dict_list, wrestler_update_list = page_parse(browser=browser, date=date, card_dict=card_dict)
-                    update_wrestler_table(wrestler_url_list=wrestler_update_list, db=db, browser=browser)
-                    update_match_table(match_dict_list=match_dict_list, db=db)
+                    update_wrestler_table(wrestler_url_list=wrestler_update_list, browser=browser)
+                    update_match_table(match_dict_list=match_dict_list)
         else:
             print("all records up to date.")
 
@@ -183,8 +140,15 @@ def full_parse(card_dict, lastdate, lastpage, browser, force_update=False):
 def page_parse(browser, date, card_dict):
     match_text_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({})"
     duration_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child(5)"
+    location_selector = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > table > tbody > tr:nth-child(2) > td:nth-child(1)"
+    attendance_selector = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > table > tbody > tr:nth-child(3) > td:nth-child(1)"
+    ppv_selector = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > table > tbody > tr:nth-child(1) > td:nth-child(2)"
 
-    url = browser.current_url[36:-5]
+    url = browser.current_url[32:-5]
+    location = clean_text(browser.find_element_by_css_selector(location_selector).text[7:])
+    attendance = browser.find_element_by_css_selector(attendance_selector).text[12:].replace(',', '')
+    ppv_bool = browser.find_element_by_css_selector(ppv_selector).text.lower() == 'pay per view: yes'
+
     match_dict_list = []
     all_wrestler_urls = set()
     for match_counter in range(2, 500):
@@ -192,7 +156,7 @@ def page_parse(browser, date, card_dict):
             match_number = match_counter - 1
             wrestler_urls = []
 
-            winner_urls = match_parse(match_counter, browser, type='winner', db=db)
+            winner_urls = match_parse(match_counter, browser, type='winner')
             wrestler_urls.extend(winner_urls)
 
             wintype = browser.find_element_by_css_selector(
@@ -201,7 +165,7 @@ def page_parse(browser, date, card_dict):
             if not wintype:
                 wintype = 'def.'  # only one blank wintype found so far but it was a huge PITA, so.
 
-            loser_urls = match_parse(match_counter, browser, type='loser', db=db)
+            loser_urls = match_parse(match_counter, browser, type='loser')
             wrestler_urls.extend(loser_urls)
 
             teams = []
@@ -214,17 +178,17 @@ def page_parse(browser, date, card_dict):
                     temp_team = []
                     for wrestler in members:
                         wrestler = wrestler.split('>')
-                        temp_wrestler = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                        temp_wrestler = ''
                         for split in wrestler:
-                            if split.find('<a') == -1:
-                                continue
-                            elif split.find('<a') < len(temp_wrestler):
+                            if split[:-3].find('<a') > -1:
                                 temp_wrestler = split
 
-                        wrestler = temp_wrestler
-                        wrestler = wrestler.split('/')[-1][:-6]
-
-                        temp_team.append(wrestler)
+                        if temp_wrestler:
+                            wrestler = temp_wrestler
+                            wrestler = wrestler.split('/')[-1][:-6]
+                            temp_team.append(wrestler)
+                        else:
+                            pass
                     teams.append(temp_team)
 
             elif '&amp;' in raw_teams and ',' not in raw_teams:     # only one losing team, with more than one person.
@@ -257,7 +221,7 @@ def page_parse(browser, date, card_dict):
             else:
                 titles = 'none'
 
-            match_id = "".join([str(date), "-", str(match_number), "_", str(card_dict['number']), "_", url])
+            match_id = "".join([str(date), "-", str(match_number), "_", str(card_dict['id']), "_", url])
 
             match_dict = {
                 "match_id": match_id,
@@ -269,7 +233,10 @@ def page_parse(browser, date, card_dict):
                 "teams": teams,
                 "matchtype": matchtype,
                 "titles": titles,
-                "card": card_dict['name']
+                "card": card_dict['id'],
+                "location": location,
+                "attendance": attendance,
+                "ppv": ppv_bool
             }
 
             match_dict_list.append(match_dict)
@@ -283,9 +250,8 @@ def page_parse(browser, date, card_dict):
     return match_dict_list, list(all_wrestler_urls)
 
 
-def update_match_table(match_dict_list, db):
+def update_match_table(match_dict_list):
     """
-
     :param match_dict_list:
     a list where each element is a dict in the following form
     {
@@ -298,7 +264,10 @@ def update_match_table(match_dict_list, db):
         "teams": list of list of wrestler_urls (strings),
         "matchtype": string,
         "titles": string,
-        "card": string
+        "card": integer,
+        "location": string,
+        "attendance": string,
+        "ppv": boolean
     }
 
     :param db:
@@ -307,8 +276,10 @@ def update_match_table(match_dict_list, db):
     :return:
     none
     """
-    match_insert_template = "INSERT INTO match_table (match_id, date, duration, wintype, titles, matchtype, card) VALUES ('{match_id}', {date}, {duration}, {wintype}, {titles}, {matchtype}, '{card}')"
     team_insert_template = "INSERT INTO team_table (match_id, competitors) VALUES ('{match_id}', '{competitors}')"
+    match_insert_template = """
+INSERT INTO match_table (match_id, date, duration, wintype, titles, matchtype, location, promotion, attendance)
+VALUES ('{match_id}', {date}, {duration}, {wintype}, {titles}, {matchtype}, {location}, '{promotion}', {attendance})"""
 
     for match_dict in match_dict_list:
         match_insert_dict = {
@@ -318,7 +289,10 @@ def update_match_table(match_dict_list, db):
             'wintype': -1,
             'titles': -1,
             'matchtype': -1,
-            'card': match_dict['card']
+            'promotion': match_dict['card'],
+            "location": -1,
+            "attendance": -1,
+            "ppv": match_dict['ppv']
         }
 
         wintype_query = db.query("SELECT id FROM wintype_table WHERE wintype = '{}'".format(match_dict["wintype"])).as_dict()
@@ -344,6 +318,13 @@ def update_match_table(match_dict_list, db):
             db.query("INSERT INTO matchtype_table (matchtype) VALUES ('{}')".format(match_dict["matchtype"]))
             matchtype_query = db.query("SELECT id FROM matchtype_table WHERE matchtype = '{}'".format(match_dict["matchtype"])).as_dict()
             match_insert_dict['matchtype'] = matchtype_query[0].get('id')
+            
+        match_insert_dict['location'] = update_location_table(match_dict["location"])
+
+        try:
+            match_insert_dict['attendance'] = int(match_dict["attendance"])
+        except ValueError:       # attendance not a number
+            match_insert_dict['attendance'] = -1
 
         db.query(match_insert_template.format(**match_insert_dict))
 
@@ -379,7 +360,7 @@ def update_match_table(match_dict_list, db):
         db.query(team_insert_template.format(**team_insert_dict))
 
 
-def update_wrestler_table(wrestler_url_list, db, browser):
+def update_wrestler_table(wrestler_url_list, browser):
     for profightdb_id in wrestler_url_list:
         wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(profightdb_id)).as_dict()
         if not wrestler_query:
@@ -387,19 +368,17 @@ def update_wrestler_table(wrestler_url_list, db, browser):
             wrestler_query = db.query("SELECT id FROM wrestler_table WHERE profightdb_id = '{}'".format(profightdb_id)).as_dict()
             if not wrestler_query:
 
-                insert_template = "INSERT INTO wrestler_table (profightdb_id, id, current_alias, nationality, dob) VALUES ('{profightdb_id}', {id}, '{current_alias}', '{nationality}', {dob})"
+                insert_template = "INSERT INTO wrestler_table (profightdb_id, id, nationality, dob) VALUES ('{profightdb_id}', {id}, '{nationality}', {dob})"
                 insert_dict = {
                     'profightdb_id': profightdb_id,
                     'id': int(profightdb_id.split('-')[-1]),
-                    'current_alias': '',
                     'nationality': '',
                     'dob': -1
                 }
                 browser.get(url='http://www.profightdb.com/wrestlers/{}.html'.format(profightdb_id))
-                insert_dict['current_alias'] = clean_text(browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(1) > td:nth-child(3)').text[16:])
                 nationality = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text[13:]
 
-                insert_dict['nationality'] = update_nationality_table(nationality=nationality, db=db)
+                insert_dict['nationality'] = update_nationality_table(nationality=nationality)
                 try:
                     date = browser.find_element_by_css_selector('body > div > div.wrapper > div.content-wrapper > div.content > div:nth-child(2) > table > tbody > tr:nth-child(2) > td:nth-child(1) > a').text
                     month, day, year = date.split()
@@ -412,7 +391,7 @@ def update_wrestler_table(wrestler_url_list, db, browser):
                 db.query(insert_template.format(**insert_dict))
 
 
-def match_parse(match_counter, browser, type, db):
+def match_parse(match_counter, browser, type):
     match_text_template =   "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({}) > a:nth-child({})"
     italic_text_template =  "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child({}) > td:nth-child({}) > i > a:nth-child({})"
 
@@ -441,13 +420,13 @@ def match_parse(match_counter, browser, type, db):
             except selenium.common.exceptions.NoSuchElementException:
                 break
 
-    update_alias_table(alias_url_dict, db=db)
+    update_alias_table(alias_url_dict)
 
     just_url_list = list(alias_url_dict.values())
     return just_url_list
 
 
-def update_alias_table(alias_and_url_dict, db):
+def update_alias_table(alias_and_url_dict):
     for alias, url in alias_and_url_dict.items():
         id = int(url.split('-')[-1])
         dupecheck = db.query("SELECT alias FROM alias_table WHERE alias = '{alias}'".format(alias=alias)).as_dict()
@@ -457,7 +436,7 @@ def update_alias_table(alias_and_url_dict, db):
             db.query("INSERT INTO alias_table (alias, id) VALUES ('{alias}', {id})".format(alias=alias, id=id))
 
 
-def update_nationality_table(nationality, db):
+def update_nationality_table(nationality):
     dupecheck = db.query("SELECT id FROM nationality_table WHERE nationality = '{nationality}'".format(nationality=nationality)).as_dict()
     if dupecheck:
         nationality_id = dupecheck[0]['id']
@@ -467,6 +446,18 @@ def update_nationality_table(nationality, db):
         nationality_id = nationality_query[0]['id']
 
     return nationality_id
+
+
+def update_location_table(location):
+    dupecheck = db.query("SELECT id FROM location_table WHERE location = '{location}'".format(location=location)).as_dict()
+    if dupecheck:
+        location_id = dupecheck[0]['id']
+    else:
+        db.query("INSERT INTO location_table (location) VALUES ('{location}')".format(location=location))
+        location_query = db.query("SELECT id FROM location_table WHERE location = '{location}'".format(location=location)).as_dict()
+        location_id = location_query[0]['id']
+
+    return location_id
 
 
 def clean_text(text):
@@ -480,27 +471,31 @@ def clean_text(text):
     return temp_string
 
 
-def last_date(card, db):
-    lastdate_result = db.query("SELECT max(date) FROM match_table WHERE card = '{card}';".format(card=card), fetchall=True).as_dict()
+def last_date(card_number):
+    lastdate_result = db.query("SELECT max(date) FROM match_table WHERE promotion = {card};".format(card=card_number), fetchall=True).as_dict()
     lastdate = lastdate_result[0].get('max(date)', None)
     if lastdate is None:
         lastdate = 20140101
     return lastdate
 
 
-def last_page(card, browser):
-    index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{}-no-{}.html?order=&type='
+def last_page(card_number, browser):
+    index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{page}-no-{cardnum}.html?order=&type='
     last_page_template = "body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > div"
 
-    browser.get(index_url_template.format(1, card))
-    lastpage = browser.find_element_by_css_selector(last_page_template)
-    lastpage = lastpage.get_attribute('innerHTML')
-    lastpage = int(int(lastpage.split("showing 1-10 of ")[1][:-1])/10)+1
-    lastpage = min(lastpage, 200)
+    browser.get(index_url_template.format(page=1, cardnum=card_number))
+    try:
+        lastpage = browser.find_element_by_css_selector(last_page_template)
+        lastpage = lastpage.get_attribute('innerHTML')
+        lastpage = int(int(lastpage.split("showing 1-10 of ")[1][:-1])/10)+1
+        lastpage = min(lastpage, 200)
+    except selenium.common.exceptions.NoSuchElementException:
+        lastpage = 1
+
     return lastpage
 
 
-def vacuum(db=records.Database(db_url=db_url), verbose=False):
+def vacuum():
     if verbose:
         from os.path import getsize
         before = getsize(db.db_url[10:])
@@ -513,10 +508,26 @@ def vacuum(db=records.Database(db_url=db_url), verbose=False):
         db.query('VACUUM;')
 
 
+def fill_promotion_table(browser):
+    index_url_template = 'http://www.profightdb.com/cards/wwe-cards-pg{page}-no-{card_number}.html?order=&type='
+    promotion_name_selector = 'body > div > div.wrapper > div.content-wrapper > div.content.inner > div.right-content > div > div > table > tbody > tr:nth-child(2) > td:nth-child(2) > a > strong'
+
+    if verbose:
+        print('filling promotion table')
+
+    for card_number in range(1, 300):
+        try:
+            browser.get(index_url_template.format(page=1, card_number=card_number))
+            card_name = browser.find_element_by_css_selector(promotion_name_selector).text.lower().replace('.', '')
+            db.query("INSERT INTO promotion_table (promotion, id) VALUES ('{promotion}', {id})".format(promotion=card_name, id=card_number))
+
+        except selenium.common.exceptions.NoSuchElementException:
+            pass
+
+
 if __name__ == '__main__':
-    db = records.Database(db_url=db_url)
     init = False
-    verbose = True
+    browser = webdriver.Chrome("chromedriver.exe", chrome_options=chrome_options)
 
     if init:
         table_dict_list = [
@@ -534,7 +545,6 @@ if __name__ == '__main__':
                         'key_type': 'INTEGER',
                         'primary_key_flag': True
                     },
-
                     {
                         'key_name': 'date',
                         'key_type': 'INTEGER',
@@ -542,11 +552,11 @@ if __name__ == '__main__':
                     },
                     {
                         'key_name': 'duration',
-                        'key_type':  'INTEGER',
+                        'key_type':  'INTEGER'
                     },
                     {
                         'key_name': 'winner',
-                        'key_type':  'INTEGER',
+                        'key_type':  'INTEGER'
                     },
                     {
                         'key_name': 'wintype',
@@ -555,7 +565,7 @@ if __name__ == '__main__':
                     },
                     {
                         'key_name': 'titles',
-                        'key_type':  'INTEGER',
+                        'key_type':  'INTEGER'
                     },
                     {
                         'key_name': 'matchtype',
@@ -563,12 +573,21 @@ if __name__ == '__main__':
                         'not_null_flag': True
                     },
                     {
-                        'key_name': 'card',
-                        'key_type':  'TEXT',
+                        'key_name': 'promotion',
+                        'key_type':  'INTEGER',
+                        'not_null_flag': True
                     },
                     {
-                        'key_name': 'competitors',
-                        'key_type': 'TEXT',
+                        'key_name': 'location',
+                        'key_type':  'INTEGER'
+                    },
+                    {
+                        'key_name': 'attendance',
+                        'key_type':  'INTEGER'
+                    },
+                    {
+                        'key_name': 'ppv',
+                        'key_type':  'INTEGER'
                     }
                 ]
              },
@@ -632,20 +651,15 @@ if __name__ == '__main__':
                         'key_type': 'INTEGER',
                         'primary_key_flag': True
                     },
-
-                    {
-                        'key_name': 'current_alias',
-                        'key_type':  'TEXT',
-                        'unique_flag': True,
-                        'not_null_flag': True
-                    },
                     {
                         'key_name': 'nationality',
                         'key_type': 'TEXT',
+                        'not_null_flag': True
                     },
                     {
                         'key_name': 'dob',
                         'key_type': 'TEXT',
+                        'not_null_flag': True
                     }
                 ]
             },
@@ -660,8 +674,8 @@ if __name__ == '__main__':
                     },
                     {
                         'key_name': 'id',
-                        'key_type': 'INTEGER',
-                    },
+                        'key_type': 'INTEGER'
+                    }
                 ]
             },
             {
@@ -677,43 +691,74 @@ if __name__ == '__main__':
                         'key_name': 'id',
                         'key_type': 'INTEGER',
                         'primary_key_flag': True
+                    }
+                ]
+            },
+            {
+                'table_name': 'location_table',
+                'table_params': [
+                    {
+                        'key_name': 'location',
+                        'key_type': 'TEXT',
+                        'unique_flag': True,
+                        'not_null_flag': True
+                    },
+                    {
+                        'key_name': 'id',
+                        'key_type': 'INTEGER',
+                        'primary_key_flag': True
+                    }
+                ]
+            },
+            {
+                'table_name': 'promotion_table',
+                'table_params': [
+                    {
+                        'key_name': 'promotion',
+                        'key_type': 'TEXT',
+                        'unique_flag': True,
+                        'not_null_flag': True
+                    },
+                    {
+                        'key_name': 'id',
+                        'key_type': 'INTEGER',
+                        'primary_key_flag': True
                     },
                 ]
-            }
-
-        ]
-
-        for table_dict in table_dict_list:
-            init_table(table_dict=table_dict, db=db)
-
-        virtual_table_dict_list = [
+            },
             {
                 'table_name': 'team_table',
                 'table_params': [
                     {
                         'key_name': 'competitors',
-                        'key_type': 'TEXT'
+                        'key_type': 'TEXT',
+                        'not_null_flag': True
                     },
                     {
                         'key_name': 'match_id',
-                        'key_type': 'TEXT'
+                        'key_type': 'TEXT',
+                        'not_null_flag': True
                     }
                 ]
-             }
+            }
         ]
-        for virtual_table_dict in virtual_table_dict_list:
-            # init_virtual_table(table_dict=virtual_table_dict, db=db)    # disabled until i decide to implement FTS5; using LIKE instead until then.
-            init_table(table_dict=virtual_table_dict, db=db)
-    vacuum(db=db, verbose=verbose)
 
-    browser = webdriver.Chrome("chromedriver.exe", chrome_options=chrome_options)
+        for table_dict in table_dict_list:
+            if verbose:
+                print("initializing table: '{name}'".format(name=table_dict["table_name"]))
+            init_table(table_dict=table_dict)
+        fill_promotion_table(browser=browser)
 
-    for card_dict in [{'name': 'wwe', 'number': 2}, {'name': 'nxt', 'number': 103}]:
-        lastdate = last_date(card_dict['name'], db=db)
-        lastpage = last_page(card_dict['number'], browser=browser)
-        print("beginning {} scrape. last page is {}, last date was {}".format(card_dict['name'], lastpage, lastdate))
-        full_parse(card_dict, lastdate=lastdate, lastpage=lastpage, browser=browser, force_update=False)
-        vacuum(db=db, verbose=verbose)
+    vacuum()
+
+    promotion_list = db.query('SELECT promotion, id FROM promotion_table').as_dict()
+    for card_dict in promotion_list:
+        lastdate = last_date(card_dict['id'])
+        lastpage = last_page(card_dict['id'], browser=browser)
+        if verbose:
+            print("\nbeginning {} scrape. last page is {}, last date was {}".format(card_dict['promotion'], lastpage, lastdate))
+        full_parse(card_dict, lastdate=lastdate, lastpage=lastpage, browser=browser)
+        vacuum()
 
     browser.close()
     print("finished!")
