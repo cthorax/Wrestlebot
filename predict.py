@@ -375,7 +375,9 @@ class Model(object):
 
 
 def test():
-    model = Model(dataset_dict={'matches': 10})
+    l_model = Model(batch_size=1, train_steps=1, model_type='linear', dataset_dict={'matches': 10}, name='Linear Test')
+    d_model = Model(batch_size=1, train_steps=1, model_type='deep', dataset_dict={'matches': 10}, name='Deep Test')
+    d_model = Model(batch_size=1, train_steps=1, model_type='hybrid', dataset_dict={'matches': 10}, name='Hybrid Test')
     pass
 
 
