@@ -1,2 +1,1 @@
-Blood-powered Wrestling Prediction Engine. Now SQL based, with the goal of handling arbitrary numbers of competitors in the engine.
-
+Blood-powered Wrestling Prediction Engine. Version 5 will use Flask to generate web-based UI so i don't break my eyes using it.
